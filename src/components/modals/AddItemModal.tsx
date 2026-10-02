@@ -11,9 +11,15 @@ import {
   RefreshCw,
   Palette,
   Layers,
+  Wand2,
+  Scissors,
 } from 'lucide-react';
 import { ClothingCategory, ClothingItem, ClothingOccasion, ClothingStyle } from '@/types/wardrobe';
-import { processGarmentImage } from '@/lib/imageProcessor';
+import {
+  processGarmentImage,
+  autoCropAndEnhanceGarment,
+  removeGarmentBackground,
+} from '@/lib/imageProcessor';
 import { AIService } from '@/lib/ai/AIService';
 import confetti from 'canvas-confetti';
 
@@ -77,6 +83,15 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
   const [step, setStep] = useState<'upload' | 'analyzing' | 'confirm'>('upload');
   const [photoDataUrl, setPhotoDataUrl] = useState<string | null>(null);
 
+  // Image Processing & Cutout States
+  const [rawOriginalUrl, setRawOriginalUrl] = useState<string | null>(null);
+  const [studioPhotoUrl, setStudioPhotoUrl] = useState<string | null>(null);
+  const [cutoutPhotoUrl, setCutoutPhotoUrl] = useState<string | null>(null);
+  const [imageMode, setImageMode] = useState<'studio' | 'cutout' | 'original'>('studio');
+  const [isRemovingBg, setIsRemovingBg] = useState(false);
+  const [bgProgressPct, setBgProgressPct] = useState(0);
+  const [bgProgressStage, setBgProgressStage] = useState('Processando IA...');
+
   // Editable Form Data
   const [name, setName] = useState('');
   const [category, setCategory] = useState<ClothingCategory>('tops');
@@ -94,6 +109,11 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
   const resetState = () => {
     setStep('upload');
     setPhotoDataUrl(null);
+    setRawOriginalUrl(null);
+    setStudioPhotoUrl(null);
+    setCutoutPhotoUrl(null);
+    setImageMode('studio');
+    setIsRemovingBg(false);
     setName('');
     setSubCategory('');
   };
@@ -135,17 +155,55 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
     }
   };
 
+  const handleTriggerBgRemoval = async () => {
+    const source = rawOriginalUrl || photoDataUrl;
+    if (!source) return;
+
+    setIsRemovingBg(true);
+    setBgProgressPct(15);
+    setBgProgressStage('Carregando modelo IA...');
+
+    try {
+      const result = await removeGarmentBackground(source, (pct, stage) => {
+        setBgProgressPct(pct);
+        setBgProgressStage(stage);
+      });
+      setCutoutPhotoUrl(result.studioUrl);
+      setPhotoDataUrl(result.studioUrl);
+      setImageMode('cutout');
+    } catch (err) {
+      console.error('Failed to remove background:', err);
+      alert('Não foi possível remover o fundo automaticamente nesta imagem. A versão de estúdio ajustada foi mantida.');
+    } finally {
+      setIsRemovingBg(false);
+    }
+  };
+
   const handleFileSelected = async (file: File) => {
     setStep('analyzing');
     try {
       // 1. Process image on client canvas (studio treatment + color extraction)
       const processed = await processGarmentImage(file);
+      setRawOriginalUrl(processed.rawOriginalUrl);
+      setStudioPhotoUrl(processed.dataUrl);
       setPhotoDataUrl(processed.dataUrl);
+      setImageMode('studio');
 
       // 2. Classify via AI Service
       const aiResult = await AIService.classifyGarment(processed.dataUrl, processed.dominantColor);
 
-      // 3. Populate form with AI tags
+      // 3. AI Auto-Framing: if AI detected object bounding box, auto-crop & straighten piece
+      if (aiResult.box_2d && aiResult.box_2d.length === 4) {
+        try {
+          const autoFramed = await autoCropAndEnhanceGarment(processed.rawOriginalUrl, aiResult.box_2d);
+          setStudioPhotoUrl(autoFramed);
+          setPhotoDataUrl(autoFramed);
+        } catch (cropErr) {
+          console.warn('Auto-frame adjustment skipped:', cropErr);
+        }
+      }
+
+      // 4. Populate form with AI tags
       const detectedSub = aiResult.subCategory || 'Nova Peça';
       setName(detectedSub);
       setCategory(aiResult.category || 'tops');
@@ -164,7 +222,10 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
       // Fallback preview
       const reader = new FileReader();
       reader.onload = (e) => {
-        setPhotoDataUrl(e.target?.result as string);
+        const raw = e.target?.result as string;
+        setPhotoDataUrl(raw);
+        setRawOriginalUrl(raw);
+        setStudioPhotoUrl(raw);
         setName('Minha Peça');
         setSubCategory('Peça');
         setStep('confirm');
@@ -195,6 +256,7 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
       category,
       subCategory: finalSub,
       imageUrl: photoDataUrl,
+      originalImageUrl: rawOriginalUrl || undefined,
       color: {
         name: colorName,
         hex: colorHex,
@@ -337,21 +399,134 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
           {/* STEP 3: CONFIRM & EDIT METADATA */}
           {step === 'confirm' && photoDataUrl && (
             <div className="space-y-4">
-              {/* Photo Preview Card */}
-              <div className="relative aspect-square max-h-52 mx-auto rounded-2xl overflow-hidden border border-[#EAE5DC] bg-white shadow-sm flex items-center justify-center">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={photoDataUrl}
-                  alt="Peça capturada"
-                  className="w-full h-full object-contain p-2"
-                />
-                <button
-                  onClick={() => setStep('upload')}
-                  className="absolute top-2 right-2 bg-black/60 text-white p-1.5 rounded-full text-xs flex items-center gap-1 backdrop-blur-md"
-                >
-                  <RefreshCw size={12} />
-                  <span>Trocar foto</span>
-                </button>
+              {/* Photo Preview Card with Studio Modes */}
+              <div className="space-y-2">
+                <div className="relative aspect-square max-h-56 mx-auto rounded-3xl overflow-hidden border-2 border-[#EAE5DC] bg-white shadow-sm flex items-center justify-center">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={photoDataUrl}
+                    alt="Peça capturada"
+                    className="w-full h-full object-contain p-2.5 transition-all duration-300"
+                  />
+
+                  {/* Mode badge overlay */}
+                  <div className="absolute top-2.5 left-2.5 bg-black/70 backdrop-blur-md text-[#E5C799] text-[10px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1 shadow-sm">
+                    {imageMode === 'cutout' ? (
+                      <>
+                        <Scissors size={11} />
+                        <span>Sem Fundo IA</span>
+                      </>
+                    ) : imageMode === 'studio' ? (
+                      <>
+                        <Wand2 size={11} />
+                        <span>Estúdio Pro (Ajustado)</span>
+                      </>
+                    ) : (
+                      <>
+                        <Camera size={11} />
+                        <span>Foto Original</span>
+                      </>
+                    )}
+                  </div>
+
+                  <button
+                    onClick={() => setStep('upload')}
+                    className="absolute top-2.5 right-2.5 bg-black/60 text-white p-1.5 px-2.5 rounded-full text-[10px] font-semibold flex items-center gap-1 backdrop-blur-md active:scale-95 transition-all"
+                  >
+                    <RefreshCw size={11} />
+                    <span>Trocar</span>
+                  </button>
+                </div>
+
+                {/* AI Background Removal Progress or Actions */}
+                {isRemovingBg ? (
+                  <div className="bg-[#FAF8F5] border border-[#EAE5DC] rounded-2xl p-3 space-y-1.5 animate-pulse">
+                    <div className="flex items-center justify-between text-xs font-bold text-[#111110]">
+                      <span className="flex items-center gap-1.5">
+                        <Sparkles size={14} className="text-[#C29F68] animate-spin" />
+                        <span>{bgProgressStage}</span>
+                      </span>
+                      <span>{bgProgressPct}%</span>
+                    </div>
+                    <div className="w-full h-2 bg-[#EAE5DC] rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-[#C29F68] to-[#18181B] transition-all duration-200"
+                        style={{ width: `${bgProgressPct}%` }}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    {/* Mode Switcher Buttons */}
+                    <div className="flex bg-[#F2EDE4]/70 p-1 rounded-2xl gap-1 text-xs">
+                      {studioPhotoUrl && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setImageMode('studio');
+                            setPhotoDataUrl(studioPhotoUrl);
+                          }}
+                          className={`flex-1 py-1.5 rounded-xl font-bold transition-all text-[11px] flex items-center justify-center gap-1 ${
+                            imageMode === 'studio'
+                              ? 'bg-white text-[#111110] shadow-xs'
+                              : 'text-[#68655E] hover:text-[#111110]'
+                          }`}
+                        >
+                          <Wand2 size={12} />
+                          <span>Estúdio Pro</span>
+                        </button>
+                      )}
+
+                      {cutoutPhotoUrl && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setImageMode('cutout');
+                            setPhotoDataUrl(cutoutPhotoUrl);
+                          }}
+                          className={`flex-1 py-1.5 rounded-xl font-bold transition-all text-[11px] flex items-center justify-center gap-1 ${
+                            imageMode === 'cutout'
+                              ? 'bg-white text-[#111110] shadow-xs'
+                              : 'text-[#68655E] hover:text-[#111110]'
+                          }`}
+                        >
+                          <Scissors size={12} />
+                          <span>Sem Fundo</span>
+                        </button>
+                      )}
+
+                      {rawOriginalUrl && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setImageMode('original');
+                            setPhotoDataUrl(rawOriginalUrl);
+                          }}
+                          className={`flex-1 py-1.5 rounded-xl font-bold transition-all text-[11px] flex items-center justify-center gap-1 ${
+                            imageMode === 'original'
+                              ? 'bg-white text-[#111110] shadow-xs'
+                              : 'text-[#68655E] hover:text-[#111110]'
+                          }`}
+                        >
+                          <Camera size={12} />
+                          <span>Original</span>
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Button to remove background if not done yet */}
+                    {!cutoutPhotoUrl && (
+                      <button
+                        type="button"
+                        onClick={handleTriggerBgRemoval}
+                        className="w-full py-2 px-3 bg-gradient-to-r from-[#18181B] to-[#2C2C32] hover:from-[#2A2A2E] hover:to-[#383840] text-[#E5C799] rounded-xl text-xs font-bold flex items-center justify-center gap-2 active:scale-98 transition-all shadow-xs"
+                      >
+                        <Scissors size={13} />
+                        <span>✨ Remover Fundo com IA (Recorte Transparente)</span>
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Garment Name Input */}

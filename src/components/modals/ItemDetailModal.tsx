@@ -15,6 +15,8 @@ import {
   Edit3,
   Check,
   Layers,
+  Scissors,
+  Wand2,
 } from 'lucide-react';
 import {
   ClothingCategory,
@@ -25,6 +27,7 @@ import {
 } from '@/types/wardrobe';
 import { OutfitGenerator } from '@/lib/ai/OutfitGenerator';
 import { useWardrobe } from '@/context/WardrobeContext';
+import { removeGarmentBackground } from '@/lib/imageProcessor';
 
 interface ItemDetailModalProps {
   item: ClothingItem | null;
@@ -95,6 +98,8 @@ export const ItemDetailModal: React.FC<ItemDetailModalProps> = ({
   const [editOccasions, setEditOccasions] = useState<ClothingOccasion[]>([]);
   const [editMaterial, setEditMaterial] = useState('');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [isRemovingBg, setIsRemovingBg] = useState(false);
+  const [bgProgress, setBgProgress] = useState({ pct: 0, stage: '' });
 
   // Sync edit state when item changes
   useEffect(() => {
@@ -108,6 +113,7 @@ export const ItemDetailModal: React.FC<ItemDetailModalProps> = ({
       setEditOccasions(item.occasions || ['casual']);
       setEditMaterial(item.material || '');
       setIsEditing(false);
+      setIsRemovingBg(false);
     }
   }, [item]);
 
@@ -116,6 +122,28 @@ export const ItemDetailModal: React.FC<ItemDetailModalProps> = ({
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 2500);
+  };
+
+  const handleRemoveBackground = async () => {
+    if (!item) return;
+    setIsRemovingBg(true);
+    setBgProgress({ pct: 15, stage: 'Carregando IA...' });
+    try {
+      const source = item.originalImageUrl || item.imageUrl;
+      const res = await removeGarmentBackground(source, (pct, stage) => {
+        setBgProgress({ pct, stage });
+      });
+      await updateItem(item.id, {
+        imageUrl: res.studioUrl,
+        originalImageUrl: item.originalImageUrl || item.imageUrl,
+      });
+      showToast('Fundo removido e foto aprimorada! ✨');
+    } catch (err) {
+      console.error(err);
+      showToast('Não foi possível remover o fundo desta foto.');
+    } finally {
+      setIsRemovingBg(false);
+    }
   };
 
   const handleSaveEdit = () => {
@@ -467,6 +495,35 @@ export const ItemDetailModal: React.FC<ItemDetailModalProps> = ({
                   <Edit3 size={11} />
                   <span>Editar</span>
                 </button>
+              </div>
+
+              {/* Photo AI Studio Upgrade Action */}
+              <div className="pt-0.5">
+                {isRemovingBg ? (
+                  <div className="bg-[#FAF8F5] border border-[#EAE5DC] rounded-2xl p-3 space-y-1.5 animate-pulse">
+                    <div className="flex items-center justify-between text-xs font-bold text-[#111110]">
+                      <span className="flex items-center gap-1.5">
+                        <Sparkles size={14} className="text-[#C29F68] animate-spin" />
+                        <span>{bgProgress.stage}</span>
+                      </span>
+                      <span>{bgProgress.pct}%</span>
+                    </div>
+                    <div className="w-full h-2 bg-[#EAE5DC] rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-[#C29F68] to-[#18181B] transition-all duration-200"
+                        style={{ width: `${bgProgress.pct}%` }}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={handleRemoveBackground}
+                    className="w-full py-2 px-3 bg-[#FAF8F5] hover:bg-[#F2EDE4] border border-[#EAE5DC] rounded-2xl text-xs font-semibold text-[#8C6D38] flex items-center justify-center gap-1.5 transition-all active:scale-98 shadow-xs"
+                  >
+                    <Scissors size={13} />
+                    <span>✨ IA: Remover Fundo & Deixar Foto de Catálogo</span>
+                  </button>
+                )}
               </div>
 
               {/* Title, Subcategory and Wears */}

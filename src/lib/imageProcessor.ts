@@ -8,6 +8,7 @@
 
 export interface ProcessedImageResult {
   dataUrl: string;
+  rawOriginalUrl: string;
   dominantColor: {
     name: string;
     hex: string;
@@ -173,9 +174,20 @@ export async function processGarmentImage(fileOrUrl: File | string): Promise<Pro
 
         const dominant = findClosestColor(avgR, avgG, avgB);
         const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        let rawOriginal = '';
+        if (typeof fileOrUrl === 'string') {
+          rawOriginal = fileOrUrl;
+        } else {
+          try {
+            rawOriginal = canvas.toDataURL('image/jpeg', 0.9);
+          } catch {
+            rawOriginal = dataUrl;
+          }
+        }
 
         resolve({
           dataUrl,
+          rawOriginalUrl: rawOriginal,
           dominantColor: dominant,
           palette: [dominant.hex, '#111111', '#FBF9F5'],
           width: targetSize,
@@ -199,4 +211,210 @@ export async function processGarmentImage(fileOrUrl: File | string): Promise<Pro
       reader.readAsDataURL(fileOrUrl);
     }
   });
+}
+
+/**
+ * AI Auto-Framing & Studio Treatment:
+ * When a photo is taken "de qualquer jeito" (messy background, bed, floor, far away),
+ * this function uses the AI detected bounding box (box_2d) to automatically crop
+ * out the messy room, center the garment, boost exposure & contrast, and place
+ * it on a luxury catalog background with soft studio shadow.
+ */
+export async function autoCropAndEnhanceGarment(
+  rawImageSrc: string,
+  box_2d?: [number, number, number, number]
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error('Canvas context unavailable');
+
+        const targetSize = 800;
+        canvas.width = targetSize;
+        canvas.height = targetSize;
+
+        // Luxury studio background gradient
+        const radial = ctx.createRadialGradient(
+          targetSize / 2,
+          targetSize / 2,
+          targetSize * 0.1,
+          targetSize / 2,
+          targetSize / 2,
+          targetSize * 0.75
+        );
+        radial.addColorStop(0, '#FFFFFF');
+        radial.addColorStop(0.75, '#FAF8F5');
+        radial.addColorStop(1, '#F0ECE4');
+        ctx.fillStyle = radial;
+        ctx.fillRect(0, 0, targetSize, targetSize);
+
+        // Determine source cropping region based on AI object detection box_2d [ymin, xmin, ymax, xmax]
+        let srcX = 0;
+        let srcY = 0;
+        let srcW = img.width;
+        let srcH = img.height;
+
+        if (box_2d && box_2d.length === 4) {
+          const [ymin, xmin, ymax, xmax] = box_2d;
+          // Values are normalized from 0 to 1000
+          const rawY = (ymin / 1000) * img.height;
+          const rawX = (xmin / 1000) * img.width;
+          const rawH = Math.max(20, ((ymax - ymin) / 1000) * img.height);
+          const rawW = Math.max(20, ((xmax - xmin) / 1000) * img.width);
+
+          // Add 6% natural breathing padding around the piece
+          const padX = rawW * 0.06;
+          const padY = rawH * 0.06;
+
+          srcX = Math.max(0, rawX - padX);
+          srcY = Math.max(0, rawY - padY);
+          srcW = Math.min(img.width - srcX, rawW + padX * 2);
+          srcH = Math.min(img.height - srcY, rawH + padY * 2);
+        }
+
+        // Draw centered in 800x800 luxury square with 45px padding
+        const padding = 45;
+        const maxDrawW = targetSize - padding * 2;
+        const maxDrawH = targetSize - padding * 2;
+        const scale = Math.min(maxDrawW / srcW, maxDrawH / srcH);
+        const drawW = srcW * scale;
+        const drawH = srcH * scale;
+        const drawX = (targetSize - drawW) / 2;
+        const drawY = (targetSize - drawH) / 2;
+
+        // Apply soft catalog drop shadow under piece
+        ctx.save();
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.09)';
+        ctx.shadowBlur = 24;
+        ctx.shadowOffsetY = 12;
+
+        // Slight image contrast and brightness enhancement
+        if (typeof ctx.filter !== 'undefined') {
+          ctx.filter = 'contrast(105%) saturate(110%) brightness(102%)';
+        }
+
+        ctx.drawImage(img, srcX, srcY, srcW, srcH, drawX, drawY, drawW, drawH);
+        ctx.restore();
+
+        resolve(canvas.toDataURL('image/jpeg', 0.88));
+      } catch (e) {
+        reject(e);
+      }
+    };
+    img.onerror = reject;
+    img.src = rawImageSrc;
+  });
+}
+
+/**
+ * Places a cutout transparent garment onto a luxury studio canvas with soft shadow
+ */
+export async function placeCutoutOnStudioCanvas(cutoutPngDataUrl: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error('Canvas context unavailable');
+
+        const targetSize = 800;
+        canvas.width = targetSize;
+        canvas.height = targetSize;
+
+        // Luxury studio background
+        const radial = ctx.createRadialGradient(
+          targetSize / 2,
+          targetSize / 2,
+          targetSize * 0.1,
+          targetSize / 2,
+          targetSize / 2,
+          targetSize * 0.75
+        );
+        radial.addColorStop(0, '#FFFFFF');
+        radial.addColorStop(0.75, '#FAF8F5');
+        radial.addColorStop(1, '#F0ECE4');
+        ctx.fillStyle = radial;
+        ctx.fillRect(0, 0, targetSize, targetSize);
+
+        // Aspect ratio contain with 50px margins
+        const padding = 50;
+        const maxDrawW = targetSize - padding * 2;
+        const maxDrawH = targetSize - padding * 2;
+        const scale = Math.min(maxDrawW / img.width, maxDrawH / img.height);
+        const drawW = img.width * scale;
+        const drawH = img.height * scale;
+        const drawX = (targetSize - drawW) / 2;
+        const drawY = (targetSize - drawH) / 2;
+
+        // Realistic studio contact shadow under isolated garment
+        ctx.save();
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.12)';
+        ctx.shadowBlur = 28;
+        ctx.shadowOffsetY = 16;
+
+        ctx.drawImage(img, drawX, drawY, drawW, drawH);
+        ctx.restore();
+
+        resolve(canvas.toDataURL('image/jpeg', 0.88));
+      } catch (e) {
+        reject(e);
+      }
+    };
+    img.onerror = reject;
+    img.src = cutoutPngDataUrl;
+  });
+}
+
+/**
+ * AI Neural Background Removal:
+ * Uses @imgly/background-removal in client browser to extract 100% of the clothing silhouette,
+ * remove bed/room/floor background, and output both transparent PNG and studio catalog card.
+ */
+export async function removeGarmentBackground(
+  imageSource: string | Blob,
+  onProgress?: (percent: number, stage: string) => void
+): Promise<{ transparentUrl: string; studioUrl: string }> {
+  try {
+    // Dynamic import to keep initial bundle small
+    const { removeBackground } = await import('@imgly/background-removal');
+
+    const blob = await removeBackground(imageSource, {
+      model: 'isnet_quint8', // 8-bit quantized model: fastest & lowest memory for mobile
+      output: {
+        format: 'image/png',
+        quality: 0.9,
+      },
+      progress: (key: string, current: number, total: number) => {
+        if (total > 0 && onProgress) {
+          const pct = Math.min(100, Math.round((current / total) * 100));
+          const stage = key.includes('fetch') ? 'Carregando IA...' : 'Recortando peça...';
+          onProgress(pct, stage);
+        }
+      },
+    });
+
+    // Convert blob to base64 data URL
+    const reader = new FileReader();
+    const transparentUrl: string = await new Promise((res, rej) => {
+      reader.onload = () => res(reader.result as string);
+      reader.onerror = rej;
+      reader.readAsDataURL(blob);
+    });
+
+    const studioUrl = await placeCutoutOnStudioCanvas(transparentUrl);
+
+    return {
+      transparentUrl,
+      studioUrl,
+    };
+  } catch (err) {
+    console.error('AI background removal error:', err);
+    throw err;
+  }
 }

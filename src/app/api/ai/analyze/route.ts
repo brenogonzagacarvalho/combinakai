@@ -20,6 +20,7 @@ Identifique com precisão:
 - Se for vestido: a category DEVE ser "dresses".
 - Se for tênis, bota, salto, sandália: a category DEVE ser "shoes".
 - Se for bolsa, cinto, boné, óculos: a category DEVE ser "accessories".
+- Localize com precisão onde a peça de roupa principal está situada na imagem para o campo "box_2d": retorne [ymin, xmin, ymax, xmax] com números inteiros normalizados de 0 a 1000. Ignore a cama, chão, paredes, cabides ou bagunça ao redor da peça.
 
 Retorne ESTRITAMENTE um JSON no seguinte formato (sem formatação markdown extra, apenas o json):
 {
@@ -31,7 +32,8 @@ Retorne ESTRITAMENTE um JSON no seguinte formato (sem formatação markdown extr
   "seasons": ["todas"],
   "formality": 2,
   "material": "Denim | Algodão | Couro | Linho | Seda | etc",
-  "confidence": 0.95
+  "confidence": 0.95,
+  "box_2d": [ymin, xmin, ymax, xmax]
 }
 `;
 

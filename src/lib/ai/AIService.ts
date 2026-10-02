@@ -18,6 +18,7 @@ export interface GarmentClassificationResult {
   formality: 1 | 2 | 3 | 4 | 5;
   material?: string;
   confidence: number;
+  box_2d?: [number, number, number, number]; // [ymin, xmin, ymax, xmax] 0-1000
 }
 
 export class AIService {
