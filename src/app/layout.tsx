@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import { Playfair_Display, Plus_Jakarta_Sans } from 'next/font/google';
 import './globals.css';
+import { AuthProvider } from '@/context/AuthContext';
 import { WardrobeProvider } from '@/context/WardrobeContext';
 
 const playfair = Playfair_Display({
@@ -70,11 +71,13 @@ export default function RootLayout({
   return (
     <html lang="pt-BR" className={`${playfair.variable} ${sans.variable}`}>
       <body className="font-sans antialiased bg-[#FBF9F5] text-[#111110] min-h-screen selection:bg-[#C29F68]/20 selection:text-[#111110]">
-        <WardrobeProvider>
-          <div className="mx-auto max-w-md min-h-screen flex flex-col relative shadow-xl shadow-stone-200/50 bg-[#FBF9F5]">
-            {children}
-          </div>
-        </WardrobeProvider>
+        <AuthProvider>
+          <WardrobeProvider>
+            <div className="mx-auto max-w-md min-h-screen flex flex-col relative shadow-xl shadow-stone-200/50 bg-[#FBF9F5]">
+              {children}
+            </div>
+          </WardrobeProvider>
+        </AuthProvider>
       </body>
     </html>
   );

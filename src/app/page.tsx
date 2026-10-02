@@ -18,6 +18,7 @@ import { ItemDetailModal } from '@/components/modals/ItemDetailModal';
 import { CreateOutfitModal } from '@/components/modals/CreateOutfitModal';
 import { OutfitResultModal } from '@/components/modals/OutfitResultModal';
 import { PwaInstallGuideModal } from '@/components/modals/PwaInstallGuideModal';
+import { AuthModal } from '@/components/modals/AuthModal';
 
 export default function App() {
   const { wardrobe, addItem, savedOutfits, isLoaded } = useWardrobe();
@@ -32,6 +33,7 @@ export default function App() {
   const [generatedOutfits, setGeneratedOutfits] = useState<Outfit[]>([]);
   const [isResultModalOpen, setIsResultModalOpen] = useState(false);
   const [isPwaModalOpen, setIsPwaModalOpen] = useState(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [anchorItemForCreate, setAnchorItemForCreate] = useState<ClothingItem | undefined>(undefined);
 
   const handleTabChange = (tab: NavTab) => {
@@ -52,7 +54,6 @@ export default function App() {
 
   const handleItemAdded = (newItem: ClothingItem) => {
     addItem(newItem);
-    // Open the added item to show "O que combina com essa peça?" immediately!
     setSelectedItem(newItem);
   };
 
@@ -111,7 +112,10 @@ export default function App() {
         )}
 
         {activeTab === 'profile' && (
-          <ProfileTab onOpenPwaModal={() => setIsPwaModalOpen(true)} />
+          <ProfileTab
+            onOpenPwaModal={() => setIsPwaModalOpen(true)}
+            onOpenAuthModal={() => setIsAuthModalOpen(true)}
+          />
         )}
       </main>
 
@@ -161,6 +165,12 @@ export default function App() {
       <PwaInstallGuideModal
         isOpen={isPwaModalOpen}
         onClose={() => setIsPwaModalOpen(false)}
+      />
+
+      {/* 6. Firebase Cloud Sync & Authentication Modal */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
       />
     </div>
   );

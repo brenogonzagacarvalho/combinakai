@@ -9,19 +9,22 @@ import {
   Share2,
   Sparkles,
   PieChart,
-  Sliders,
+  Cloud,
   CheckCircle2,
 } from 'lucide-react';
 import { useWardrobe } from '@/context/WardrobeContext';
+import { useAuth } from '@/context/AuthContext';
 import { WardrobeAnalyzer } from '@/lib/ai/WardrobeAnalyzer';
 import { ShareHelper } from '@/lib/shareHelper';
 
 interface ProfileTabProps {
   onOpenPwaModal: () => void;
+  onOpenAuthModal: () => void;
 }
 
-export const ProfileTab: React.FC<ProfileTabProps> = ({ onOpenPwaModal }) => {
+export const ProfileTab: React.FC<ProfileTabProps> = ({ onOpenPwaModal, onOpenAuthModal }) => {
   const { wardrobe, savedOutfits, loadDemoWardrobe, clearWardrobe, isDemoActive } = useWardrobe();
+  const { user, isFirebaseReady } = useAuth();
 
   const stats = WardrobeAnalyzer.analyze(wardrobe);
 
@@ -46,6 +49,43 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({ onOpenPwaModal }) => {
         <p className="text-xs text-[#78756E] mt-0.5">
           Estatísticas do armário e preferências de estilo
         </p>
+      </div>
+
+      {/* FIREBASE CLOUD SYNC CARD */}
+      <div className="bg-white rounded-3xl border border-[#EAE5DC] p-4 shadow-xs space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div
+              className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${
+                user
+                  ? 'bg-[#2F855A]/15 text-[#2F855A]'
+                  : 'bg-[#C29F68]/15 text-[#C29F68]'
+              }`}
+            >
+              <Cloud size={20} />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-[#111110]">
+                {user ? 'Armário Conectado à Nuvem' : 'Sincronizar com Firebase'}
+              </p>
+              <p className="text-[10px] text-[#78756E]">
+                {user
+                  ? (user.email || 'Conta vinculada e segura')
+                  : 'Acesse suas roupas em qualquer iPhone ou PC'}
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onOpenAuthModal}
+            className={`py-2 px-3.5 rounded-xl text-xs font-bold transition-all active:scale-95 ${
+              user
+                ? 'bg-[#F2EDE4] text-[#111110] hover:bg-[#EAE3D6]'
+                : 'bg-[#18181B] text-white hover:bg-[#2A2A2E] shadow-xs'
+            }`}
+          >
+            {user ? 'Minha Conta' : 'Conectar'}
+          </button>
+        </div>
       </div>
 
       {/* WARDROBE ANALYTICS CARD */}
@@ -184,7 +224,9 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({ onOpenPwaModal }) => {
           <span>Privacidade Garantida</span>
         </div>
         <p className="text-[11px] text-[#68655E] leading-relaxed">
-          Suas fotos e roupas ficam armazenadas 100% no navegador do seu próprio celular. Nenhum dado é compartilhado publicamente ou vendido.
+          {user
+            ? 'Suas fotos e roupas estão armazenadas de forma segura e privada na sua conta do Firebase.'
+            : 'Suas fotos e roupas estão salvas com segurança no seu navegador. Conecte ao Firebase para acessar de outros aparelhos.'}
         </p>
       </div>
 

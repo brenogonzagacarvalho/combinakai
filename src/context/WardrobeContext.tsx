@@ -3,6 +3,8 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { ClothingItem, Outfit, CalendarEntry } from '@/types/wardrobe';
 import { INITIAL_MOCK_WARDROBE } from '@/data/mockWardrobe';
+import { useAuth } from './AuthContext';
+import { FirebaseWardrobeService } from '@/lib/firebase/wardrobeService';
 
 interface WardrobeContextType {
   wardrobe: ClothingItem[];
@@ -11,20 +13,21 @@ interface WardrobeContextType {
   dislikedOutfitIds: string[];
   isLoaded: boolean;
   isDemoActive: boolean;
+  isSyncingCloud: boolean;
 
   // Actions
-  addItem: (item: ClothingItem) => void;
-  updateItem: (id: string, updates: Partial<ClothingItem>) => void;
-  deleteItem: (id: string) => void;
+  addItem: (item: ClothingItem) => Promise<void>;
+  updateItem: (id: string, updates: Partial<ClothingItem>) => Promise<void>;
+  deleteItem: (id: string) => Promise<void>;
   toggleItemFavorite: (id: string) => void;
   incrementWearCount: (itemId: string) => void;
 
-  saveOutfit: (outfit: Outfit) => void;
-  removeSavedOutfit: (outfitId: string) => void;
+  saveOutfit: (outfit: Outfit) => Promise<void>;
+  removeSavedOutfit: (outfitId: string) => Promise<void>;
   rateOutfit: (outfitId: string, feedback: 'like' | 'dislike') => void;
 
-  scheduleOutfit: (dayLabel: string, outfit: Outfit) => void;
-  removeScheduledOutfit: (calendarEntryId: string) => void;
+  scheduleOutfit: (dayLabel: string, outfit: Outfit) => Promise<void>;
+  removeScheduledOutfit: (calendarEntryId: string) => Promise<void>;
 
   loadDemoWardrobe: () => void;
   clearWardrobe: () => void;
@@ -82,12 +85,15 @@ function autoSanitizeItem(item: ClothingItem): ClothingItem {
 }
 
 export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user } = useAuth();
+
   const [wardrobe, setWardrobe] = useState<ClothingItem[]>([]);
   const [savedOutfits, setSavedOutfits] = useState<Outfit[]>([]);
   const [calendarEntries, setCalendarEntries] = useState<CalendarEntry[]>([]);
   const [dislikedOutfitIds, setDislikedOutfitIds] = useState<string[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
   const [isDemoActive, setIsDemoActive] = useState(true);
+  const [isSyncingCloud, setIsSyncingCloud] = useState(false);
 
   // Initialize from LocalStorage or Load Demo Wardrobe
   useEffect(() => {
@@ -123,6 +129,52 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   }, []);
 
+  // Sync with Firebase Firestore whenever user logs in
+  useEffect(() => {
+    if (!user) return;
+
+    const syncWithFirebase = async () => {
+      setIsSyncingCloud(true);
+      try {
+        const cloudItems = await FirebaseWardrobeService.loadWardrobe(user.uid);
+        const cloudOutfits = await FirebaseWardrobeService.loadSavedOutfits(user.uid);
+        const cloudCalendar = await FirebaseWardrobeService.loadCalendar(user.uid);
+
+        if (cloudItems.length > 0) {
+          // Cloud has existing items: hydrate local state with cloud state
+          setWardrobe(cloudItems);
+          localStorage.setItem(STORAGE_KEYS.WARDROBE, JSON.stringify(cloudItems));
+          setIsDemoActive(false);
+        } else if (wardrobe.length > 0 && !isDemoActive) {
+          // Migrate local custom wardrobe to Firebase Cloud
+          for (const item of wardrobe) {
+            let finalImageUrl = item.imageUrl;
+            if (item.imageUrl.startsWith('data:image')) {
+              finalImageUrl = await FirebaseWardrobeService.uploadGarmentImage(user.uid, item.id, item.imageUrl);
+            }
+            await FirebaseWardrobeService.saveItem(user.uid, { ...item, imageUrl: finalImageUrl });
+          }
+        }
+
+        if (cloudOutfits.length > 0) {
+          setSavedOutfits(cloudOutfits);
+          localStorage.setItem(STORAGE_KEYS.SAVED_OUTFITS, JSON.stringify(cloudOutfits));
+        }
+
+        if (cloudCalendar.length > 0) {
+          setCalendarEntries(cloudCalendar);
+          localStorage.setItem(STORAGE_KEYS.CALENDAR, JSON.stringify(cloudCalendar));
+        }
+      } catch (err) {
+        console.error('Firebase sync error:', err);
+      } finally {
+        setIsSyncingCloud(false);
+      }
+    };
+
+    syncWithFirebase();
+  }, [user]);
+
   // Save changes to LocalStorage
   const syncWardrobe = useCallback((newItems: ClothingItem[]) => {
     setWardrobe(newItems);
@@ -146,29 +198,66 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   // Item Actions
   const addItem = useCallback(
-    (item: ClothingItem) => {
-      const updated = [item, ...wardrobe];
+    async (item: ClothingItem) => {
+      let finalItem = { ...item };
+      const updated = [finalItem, ...wardrobe];
       setIsDemoActive(false);
       localStorage.setItem(STORAGE_KEYS.IS_DEMO, 'false');
       syncWardrobe(updated);
+
+      // If user is authenticated with Firebase, upload image to Cloud Storage & save to Firestore
+      if (user) {
+        try {
+          if (finalItem.imageUrl.startsWith('data:image')) {
+            const storageUrl = await FirebaseWardrobeService.uploadGarmentImage(
+              user.uid,
+              finalItem.id,
+              finalItem.imageUrl
+            );
+            finalItem.imageUrl = storageUrl;
+            // update in state
+            const updatedWithUrl = updated.map((i) => (i.id === finalItem.id ? finalItem : i));
+            syncWardrobe(updatedWithUrl);
+          }
+          await FirebaseWardrobeService.saveItem(user.uid, finalItem);
+        } catch (err) {
+          console.error('Failed to sync added item with Firebase:', err);
+        }
+      }
     },
-    [wardrobe, syncWardrobe]
+    [wardrobe, syncWardrobe, user]
   );
 
   const updateItem = useCallback(
-    (id: string, updates: Partial<ClothingItem>) => {
+    async (id: string, updates: Partial<ClothingItem>) => {
       const updated = wardrobe.map((item) => (item.id === id ? { ...item, ...updates } : item));
       syncWardrobe(updated);
+
+      if (user) {
+        try {
+          await FirebaseWardrobeService.updateItem(user.uid, id, updates);
+        } catch (err) {
+          console.error('Failed to sync updated item with Firebase:', err);
+        }
+      }
     },
-    [wardrobe, syncWardrobe]
+    [wardrobe, syncWardrobe, user]
   );
 
   const deleteItem = useCallback(
-    (id: string) => {
+    async (id: string) => {
       const updated = wardrobe.filter((item) => item.id !== id);
       syncWardrobe(updated);
+
+      if (user) {
+        try {
+          await FirebaseWardrobeService.deleteItem(user.uid, id);
+        } catch (err) {
+          console.error('Failed to sync deleted item with Firebase:', err);
+        }
+      }
     },
-    [wardrobe, syncWardrobe]
+    [wardrobe, syncWardrobe, user]
   );
 
   const toggleItemFavorite = useCallback(
@@ -177,8 +266,12 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         item.id === id ? { ...item, isFavorite: !item.isFavorite } : item
       );
       syncWardrobe(updated);
+      const target = updated.find((i) => i.id === id);
+      if (user && target) {
+        FirebaseWardrobeService.updateItem(user.uid, id, { isFavorite: target.isFavorite });
+      }
     },
-    [wardrobe, syncWardrobe]
+    [wardrobe, syncWardrobe, user]
   );
 
   const incrementWearCount = useCallback(
@@ -193,30 +286,44 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           : item
       );
       syncWardrobe(updated);
+      const target = updated.find((i) => i.id === itemId);
+      if (user && target) {
+        FirebaseWardrobeService.updateItem(user.uid, itemId, {
+          wearCount: target.wearCount,
+          lastWorn: target.lastWorn,
+        });
+      }
     },
-    [wardrobe, syncWardrobe]
+    [wardrobe, syncWardrobe, user]
   );
 
   // Outfit Actions
   const saveOutfit = useCallback(
-    (outfit: Outfit) => {
+    async (outfit: Outfit) => {
       const exists = savedOutfits.some((o) => o.id === outfit.id);
       if (!exists) {
         const updated = [{ ...outfit, isFavorite: true }, ...savedOutfits];
         syncSavedOutfits(updated);
-        // increment wear count for items
         outfit.items.forEach((i) => incrementWearCount(i.id));
+
+        if (user) {
+          await FirebaseWardrobeService.saveOutfit(user.uid, { ...outfit, isFavorite: true });
+        }
       }
     },
-    [savedOutfits, syncSavedOutfits, incrementWearCount]
+    [savedOutfits, syncSavedOutfits, incrementWearCount, user]
   );
 
   const removeSavedOutfit = useCallback(
-    (outfitId: string) => {
+    async (outfitId: string) => {
       const updated = savedOutfits.filter((o) => o.id !== outfitId);
       syncSavedOutfits(updated);
+
+      if (user) {
+        await FirebaseWardrobeService.removeOutfit(user.uid, outfitId);
+      }
     },
-    [savedOutfits, syncSavedOutfits]
+    [savedOutfits, syncSavedOutfits, user]
   );
 
   const rateOutfit = useCallback(
@@ -231,26 +338,34 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   // Calendar
   const scheduleOutfit = useCallback(
-    (dayLabel: string, outfit: Outfit) => {
+    async (dayLabel: string, outfit: Outfit) => {
       const entry: CalendarEntry = {
         id: `cal-${dayLabel}-${Date.now()}`,
         dayLabel,
         occasion: outfit.occasion,
         outfit,
       };
-      // Replace existing for same day or append
       const filtered = calendarEntries.filter((e) => e.dayLabel !== dayLabel);
-      syncCalendar([...filtered, entry]);
+      const updated = [...filtered, entry];
+      syncCalendar(updated);
+
+      if (user) {
+        await FirebaseWardrobeService.saveCalendar(user.uid, updated);
+      }
     },
-    [calendarEntries, syncCalendar]
+    [calendarEntries, syncCalendar, user]
   );
 
   const removeScheduledOutfit = useCallback(
-    (calendarEntryId: string) => {
+    async (calendarEntryId: string) => {
       const updated = calendarEntries.filter((e) => e.id !== calendarEntryId);
       syncCalendar(updated);
+
+      if (user) {
+        await FirebaseWardrobeService.saveCalendar(user.uid, updated);
+      }
     },
-    [calendarEntries, syncCalendar]
+    [calendarEntries, syncCalendar, user]
   );
 
   // Demo & Reset
@@ -281,6 +396,7 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         dislikedOutfitIds,
         isLoaded,
         isDemoActive,
+        isSyncingCloud,
         addItem,
         updateItem,
         deleteItem,
