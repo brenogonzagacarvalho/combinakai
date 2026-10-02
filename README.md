@@ -84,11 +84,13 @@ http://localhost:3000
 ## ☁️ Como Fazer Deploy na Vercel
 
 1. Crie um repositório no GitHub e faça o push do projeto:
+
    ```bash
    git add .
    git commit -m "feat: complete CombinaKai MVP mobile stylist app"
    git push origin main
    ```
+
 2. Acesse [vercel.com](https://vercel.com) e clique em **"Add New Project"**.
 3. Importe o repositório `CombinaKai`.
 4. (Opcional) Adicione a variável de ambiente:
