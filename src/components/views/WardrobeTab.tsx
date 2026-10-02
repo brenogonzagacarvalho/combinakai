@@ -9,13 +9,16 @@ import {
   Heart,
   SlidersHorizontal,
   X,
+  Cloud,
 } from 'lucide-react';
 import { ClothingCategory, ClothingItem, ClothingOccasion, ClothingStyle } from '@/types/wardrobe';
 import { useWardrobe } from '@/context/WardrobeContext';
+import { useAuth } from '@/context/AuthContext';
 
 interface WardrobeTabProps {
   onSelectItem: (item: ClothingItem) => void;
   onOpenAddModal: () => void;
+  onOpenAuthModal?: () => void;
 }
 
 const CATEGORY_TABS: Array<{ id: ClothingCategory | 'all'; label: string; icon: string }> = [
@@ -41,8 +44,10 @@ const COLOR_FILTERS = [
 export const WardrobeTab: React.FC<WardrobeTabProps> = ({
   onSelectItem,
   onOpenAddModal,
+  onOpenAuthModal,
 }) => {
   const { wardrobe, toggleItemFavorite } = useWardrobe();
+  const { user } = useAuth();
 
   const [selectedCategory, setSelectedCategory] = useState<ClothingCategory | 'all'>('all');
   const [selectedColor, setSelectedColor] = useState<string>('all');
@@ -101,6 +106,31 @@ export const WardrobeTab: React.FC<WardrobeTabProps> = ({
           <span>+ Adicionar</span>
         </button>
       </div>
+
+      {/* Cloud Backup Notification Banner if not logged in */}
+      {!user && wardrobe.length > 0 && onOpenAuthModal && (
+        <div className="bg-[#FAF8F5] border border-[#EAE5DC] rounded-2xl p-3 flex items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-xl bg-[#C29F68]/15 text-[#C29F68] flex items-center justify-center shrink-0">
+              <Cloud size={16} />
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-bold text-[#111110] truncate">
+                Salvar {wardrobe.length} peças na nuvem
+              </p>
+              <p className="text-[10px] text-[#78756E] truncate">
+                Backup gratuito para nunca perder suas roupas
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onOpenAuthModal}
+            className="shrink-0 bg-[#18181B] text-white hover:bg-[#2A2A2E] px-3 py-1.5 rounded-xl text-xs font-bold transition-all active:scale-95 shadow-xs"
+          >
+            Conectar
+          </button>
+        </div>
+      )}
 
       {/* Search Input & Quick Filter Button */}
       <div className="flex items-center gap-2">

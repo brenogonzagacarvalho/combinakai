@@ -14,6 +14,7 @@ interface WardrobeContextType {
   isLoaded: boolean;
   isDemoActive: boolean;
   isSyncingCloud: boolean;
+  lastSyncTime: Date | null;
 
   // Actions
   addItem: (item: ClothingItem) => Promise<void>;
@@ -31,6 +32,11 @@ interface WardrobeContextType {
 
   loadDemoWardrobe: () => void;
   clearWardrobe: () => void;
+
+  // Cloud & Backup Actions
+  syncNow: () => Promise<void>;
+  exportBackup: () => void;
+  importBackup: (fileContent: string) => Promise<{ success: boolean; count: number; error?: string }>;
 }
 
 const WardrobeContext = createContext<WardrobeContextType | undefined>(undefined);
@@ -95,20 +101,41 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [isDemoActive, setIsDemoActive] = useState(true);
   const [isSyncingCloud, setIsSyncingCloud] = useState(false);
 
+  const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
+
   // Initialize from LocalStorage or Load Demo Wardrobe
   useEffect(() => {
     try {
-      const storedWardrobe = localStorage.getItem(STORAGE_KEYS.WARDROBE);
-      const storedOutfits = localStorage.getItem(STORAGE_KEYS.SAVED_OUTFITS);
-      const storedCalendar = localStorage.getItem(STORAGE_KEYS.CALENDAR);
-      const storedDisliked = localStorage.getItem(STORAGE_KEYS.DISLIKED);
-      const storedIsDemo = localStorage.getItem(STORAGE_KEYS.IS_DEMO);
+      const storedWardrobe =
+        localStorage.getItem(STORAGE_KEYS.WARDROBE) ||
+        localStorage.getItem('combinakai_wardrobe_v1') ||
+        localStorage.getItem('combinakai_wardrobe');
+
+      const storedOutfits =
+        localStorage.getItem(STORAGE_KEYS.SAVED_OUTFITS) ||
+        localStorage.getItem('combinakai_saved_outfits_v1') ||
+        localStorage.getItem('combinakai_saved_outfits');
+
+      const storedCalendar =
+        localStorage.getItem(STORAGE_KEYS.CALENDAR) ||
+        localStorage.getItem('combinakai_calendar_v1') ||
+        localStorage.getItem('combinakai_calendar');
+
+      const storedDisliked =
+        localStorage.getItem(STORAGE_KEYS.DISLIKED) ||
+        localStorage.getItem('combinakai_disliked_v1');
+
+      const storedIsDemo =
+        localStorage.getItem(STORAGE_KEYS.IS_DEMO) ||
+        localStorage.getItem('combinakai_is_demo_v1');
 
       if (storedWardrobe) {
         const parsedItems: ClothingItem[] = JSON.parse(storedWardrobe);
         const sanitized = parsedItems.map(autoSanitizeItem);
         setWardrobe(sanitized);
-        setIsDemoActive(storedIsDemo === 'true');
+        // If user already has 15+ items, it's definitely a customized wardrobe
+        const isActuallyDemo = sanitized.length <= 14 && storedIsDemo === 'true';
+        setIsDemoActive(isActuallyDemo);
         localStorage.setItem(STORAGE_KEYS.WARDROBE, JSON.stringify(sanitized));
       } else {
         // First access: load mock starter wardrobe so user can experience the app immediately!
@@ -129,51 +156,159 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   }, []);
 
-  // Sync with Firebase Firestore whenever user logs in
-  useEffect(() => {
+  // Safe Non-Destructive Sync with Firebase Firestore
+  const syncNow = useCallback(async () => {
     if (!user) return;
+    setIsSyncingCloud(true);
+    try {
+      const cloudItems = await FirebaseWardrobeService.loadWardrobe(user.uid);
+      const cloudOutfits = await FirebaseWardrobeService.loadSavedOutfits(user.uid);
+      const cloudCalendar = await FirebaseWardrobeService.loadCalendar(user.uid);
 
-    const syncWithFirebase = async () => {
-      setIsSyncingCloud(true);
+      // Get latest local items from storage as safety buffer
+      const rawStored =
+        localStorage.getItem(STORAGE_KEYS.WARDROBE) ||
+        localStorage.getItem('combinakai_wardrobe_v1') ||
+        localStorage.getItem('combinakai_wardrobe');
+      const localItems: ClothingItem[] = rawStored ? JSON.parse(rawStored) : wardrobe;
+
+      // 1. NON-DESTRUCTIVE WARDROBE MERGE (NEVER DELETE LOCAL PIECES)
+      const itemMap = new Map<string, ClothingItem>();
+      // First, include all existing cloud items
+      cloudItems.forEach((ci) => itemMap.set(ci.id, ci));
+
+      // Then, merge all local pieces and upload any missing to Firestore
+      for (const li of localItems) {
+        if (!itemMap.has(li.id)) {
+          itemMap.set(li.id, li);
+          try {
+            await FirebaseWardrobeService.saveItem(user.uid, li);
+          } catch (e) {
+            console.error('Error saving item to cloud during sync:', e);
+          }
+        }
+      }
+
+      const mergedItems = Array.from(itemMap.values());
+      setWardrobe(mergedItems);
+      localStorage.setItem(STORAGE_KEYS.WARDROBE, JSON.stringify(mergedItems));
+      setIsDemoActive(false);
+      localStorage.setItem(STORAGE_KEYS.IS_DEMO, 'false');
+
+      // 2. NON-DESTRUCTIVE OUTFITS MERGE
+      const outfitMap = new Map<string, Outfit>();
+      cloudOutfits.forEach((co) => outfitMap.set(co.id, co));
+      for (const lo of savedOutfits) {
+        if (!outfitMap.has(lo.id)) {
+          outfitMap.set(lo.id, lo);
+          try {
+            await FirebaseWardrobeService.saveOutfit(user.uid, lo);
+          } catch (e) {
+            console.error('Error saving outfit to cloud:', e);
+          }
+        }
+      }
+      const mergedOutfits = Array.from(outfitMap.values());
+      setSavedOutfits(mergedOutfits);
+      localStorage.setItem(STORAGE_KEYS.SAVED_OUTFITS, JSON.stringify(mergedOutfits));
+
+      // 3. CALENDAR MERGE
+      const calMap = new Map<string, CalendarEntry>();
+      cloudCalendar.forEach((cc) => calMap.set(cc.id, cc));
+      for (const lc of calendarEntries) {
+        if (!calMap.has(lc.id)) {
+          calMap.set(lc.id, lc);
+        }
+      }
+      const mergedCal = Array.from(calMap.values());
+      setCalendarEntries(mergedCal);
+      localStorage.setItem(STORAGE_KEYS.CALENDAR, JSON.stringify(mergedCal));
+      await FirebaseWardrobeService.saveCalendar(user.uid, mergedCal);
+
+      setLastSyncTime(new Date());
+    } catch (err) {
+      console.error('Firebase sync error:', err);
+      throw err;
+    } finally {
+      setIsSyncingCloud(false);
+    }
+  }, [user, wardrobe, savedOutfits, calendarEntries]);
+
+  // Auto-sync whenever user logs in
+  useEffect(() => {
+    if (user && isLoaded) {
+      syncNow().catch((e) => console.error('Auto sync error:', e));
+    }
+  }, [user, isLoaded, syncNow]);
+
+  // 1-Click JSON Backup Export (Downloads directly to phone or PC)
+  const exportBackup = useCallback(() => {
+    const rawStored =
+      localStorage.getItem(STORAGE_KEYS.WARDROBE) ||
+      localStorage.getItem('combinakai_wardrobe_v1') ||
+      localStorage.getItem('combinakai_wardrobe');
+    const itemsToExport: ClothingItem[] = rawStored ? JSON.parse(rawStored) : wardrobe;
+
+    const backupData = {
+      app: 'CombinaKai',
+      version: '2.0',
+      exportedAt: new Date().toISOString(),
+      itemCount: itemsToExport.length,
+      wardrobe: itemsToExport,
+      savedOutfits,
+      calendarEntries,
+    };
+
+    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(backupData, null, 2));
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute('href', dataStr);
+    downloadAnchor.setAttribute(
+      'download',
+      `combinakai_backup_${itemsToExport.length}_pecas_${new Date().toISOString().slice(0, 10)}.json`
+    );
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+  }, [wardrobe, savedOutfits, calendarEntries]);
+
+  // Import JSON Backup
+  const importBackup = useCallback(
+    async (fileContent: string): Promise<{ success: boolean; count: number; error?: string }> => {
       try {
-        const cloudItems = await FirebaseWardrobeService.loadWardrobe(user.uid);
-        const cloudOutfits = await FirebaseWardrobeService.loadSavedOutfits(user.uid);
-        const cloudCalendar = await FirebaseWardrobeService.loadCalendar(user.uid);
+        const parsed = JSON.parse(fileContent);
+        const importedItems: ClothingItem[] = parsed.wardrobe || (Array.isArray(parsed) ? parsed : []);
+        if (!importedItems || importedItems.length === 0) {
+          return { success: false, count: 0, error: 'O arquivo não contém peças válidas.' };
+        }
 
-        if (cloudItems.length > 0) {
-          // Cloud has existing items: hydrate local state with cloud state
-          setWardrobe(cloudItems);
-          localStorage.setItem(STORAGE_KEYS.WARDROBE, JSON.stringify(cloudItems));
-          setIsDemoActive(false);
-        } else if (wardrobe.length > 0 && !isDemoActive) {
-          // Migrate local custom wardrobe to Firebase Cloud
-          for (const item of wardrobe) {
-            let finalImageUrl = item.imageUrl;
-            if (item.imageUrl.startsWith('data:image')) {
-              finalImageUrl = await FirebaseWardrobeService.uploadGarmentImage(user.uid, item.id, item.imageUrl);
+        const sanitized = importedItems.map(autoSanitizeItem);
+        const map = new Map<string, ClothingItem>();
+        wardrobe.forEach((i) => map.set(i.id, i));
+        sanitized.forEach((i) => map.set(i.id, i));
+
+        const merged = Array.from(map.values());
+        setWardrobe(merged);
+        localStorage.setItem(STORAGE_KEYS.WARDROBE, JSON.stringify(merged));
+        setIsDemoActive(false);
+        localStorage.setItem(STORAGE_KEYS.IS_DEMO, 'false');
+
+        if (user) {
+          for (const item of sanitized) {
+            try {
+              await FirebaseWardrobeService.saveItem(user.uid, item);
+            } catch (e) {
+              console.error(e);
             }
-            await FirebaseWardrobeService.saveItem(user.uid, { ...item, imageUrl: finalImageUrl });
           }
         }
 
-        if (cloudOutfits.length > 0) {
-          setSavedOutfits(cloudOutfits);
-          localStorage.setItem(STORAGE_KEYS.SAVED_OUTFITS, JSON.stringify(cloudOutfits));
-        }
-
-        if (cloudCalendar.length > 0) {
-          setCalendarEntries(cloudCalendar);
-          localStorage.setItem(STORAGE_KEYS.CALENDAR, JSON.stringify(cloudCalendar));
-        }
-      } catch (err) {
-        console.error('Firebase sync error:', err);
-      } finally {
-        setIsSyncingCloud(false);
+        return { success: true, count: sanitized.length };
+      } catch (err: any) {
+        return { success: false, count: 0, error: err.message || 'Arquivo inválido.' };
       }
-    };
-
-    syncWithFirebase();
-  }, [user]);
+    },
+    [wardrobe, user]
+  );
 
   // Save changes to LocalStorage
   const syncWardrobe = useCallback((newItems: ClothingItem[]) => {
@@ -397,6 +532,7 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         isLoaded,
         isDemoActive,
         isSyncingCloud,
+        lastSyncTime,
         addItem,
         updateItem,
         deleteItem,
@@ -409,6 +545,9 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         removeScheduledOutfit,
         loadDemoWardrobe,
         clearWardrobe,
+        syncNow,
+        exportBackup,
+        importBackup,
       }}
     >
       {children}

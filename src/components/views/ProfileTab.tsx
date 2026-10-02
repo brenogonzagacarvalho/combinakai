@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useRef } from 'react';
 import {
   Smartphone,
   ShieldCheck,
@@ -23,14 +23,66 @@ interface ProfileTabProps {
 }
 
 export const ProfileTab: React.FC<ProfileTabProps> = ({ onOpenPwaModal, onOpenAuthModal }) => {
-  const { wardrobe, savedOutfits, loadDemoWardrobe, clearWardrobe, isDemoActive } = useWardrobe();
+  const {
+    wardrobe,
+    savedOutfits,
+    loadDemoWardrobe,
+    clearWardrobe,
+    isDemoActive,
+    isSyncingCloud,
+    lastSyncTime,
+    syncNow,
+    exportBackup,
+    importBackup,
+  } = useWardrobe();
   const { user, isFirebaseReady } = useAuth();
+
+  const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const stats = WardrobeAnalyzer.analyze(wardrobe);
 
   const handleShareWardrobe = () => {
     const text = ShareHelper.formatWardrobeText(wardrobe.length);
     ShareHelper.shareToWhatsApp(text);
+  };
+
+  const handleManualSync = async () => {
+    if (!user) {
+      onOpenAuthModal();
+      return;
+    }
+    try {
+      await syncNow();
+      setSyncFeedback('✅ Todas as peças foram sincronizadas com o Firebase!');
+      setTimeout(() => setSyncFeedback(null), 4000);
+    } catch (e) {
+      setSyncFeedback('❌ Erro ao sincronizar. Verifique sua conexão.');
+      setTimeout(() => setSyncFeedback(null), 4000);
+    }
+  };
+
+  const handleDownloadBackup = () => {
+    exportBackup();
+    setSyncFeedback('📥 Cópia de segurança baixada com sucesso no seu dispositivo!');
+    setTimeout(() => setSyncFeedback(null), 4000);
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const content = event.target?.result as string;
+      const res = await importBackup(content);
+      if (res.success) {
+        setSyncFeedback(`✅ ${res.count} peças restauradas do arquivo!`);
+      } else {
+        setSyncFeedback(`❌ ${res.error || 'Falha ao importar backup'}`);
+      }
+      setTimeout(() => setSyncFeedback(null), 4000);
+    };
+    reader.readAsText(file);
   };
 
   const handleClear = () => {
@@ -47,44 +99,114 @@ export const ProfileTab: React.FC<ProfileTabProps> = ({ onOpenPwaModal, onOpenAu
           Perfil & Inteligência
         </h1>
         <p className="text-xs text-[#78756E] mt-0.5">
-          Estatísticas do armário e preferências de estilo
+          Estatísticas do armário, backup na nuvem e preferências
         </p>
       </div>
 
-      {/* FIREBASE CLOUD SYNC CARD */}
-      <div className="bg-white rounded-3xl border border-[#EAE5DC] p-4 shadow-xs space-y-2">
-        <div className="flex items-center justify-between">
+      {/* CLOUD SYNC & BACKUP CENTER */}
+      <div className="bg-gradient-to-b from-white to-[#FAF8F5] rounded-3xl border-2 border-[#EAE5DC] p-5 shadow-xs space-y-4">
+        <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3">
             <div
-              className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${
+              className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-sm ${
                 user
-                  ? 'bg-[#2F855A]/15 text-[#2F855A]'
-                  : 'bg-[#C29F68]/15 text-[#C29F68]'
+                  ? 'bg-[#2F855A]/15 text-[#2F855A] border border-[#2F855A]/30'
+                  : 'bg-[#C29F68]/15 text-[#C29F68] border border-[#C29F68]/30'
               }`}
             >
-              <Cloud size={20} />
+              <Cloud size={24} className={isSyncingCloud ? 'animate-bounce' : ''} />
             </div>
             <div>
-              <p className="text-xs font-bold text-[#111110]">
-                {user ? 'Armário Conectado à Nuvem' : 'Sincronizar com Firebase'}
-              </p>
-              <p className="text-[10px] text-[#78756E]">
+              <div className="flex items-center gap-2">
+                <h2 className="font-serif text-sm font-bold text-[#111110]">
+                  {user ? 'Armário Conectado à Nuvem' : 'Sincronizar com Firebase'}
+                </h2>
+                <span
+                  className={`text-[9px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
+                    user
+                      ? 'bg-[#2F855A]/15 text-[#2F855A]'
+                      : 'bg-[#C29F68]/15 text-[#8C6D38]'
+                  }`}
+                >
+                  {user ? 'Online' : 'Local'}
+                </span>
+              </div>
+              <p className="text-[11px] text-[#78756E] mt-0.5">
                 {user
-                  ? (user.email || 'Conta vinculada e segura')
-                  : 'Acesse suas roupas em qualquer iPhone ou PC'}
+                  ? `${user.email || 'Conta Vinculada'} • Suas ${wardrobe.length} peças estão salvas no Firebase.`
+                  : `Você tem ${wardrobe.length} peças salvas no celular. Conecte ao Firebase para garantir que nada se perca.`}
               </p>
             </div>
           </div>
+        </div>
+
+        {/* Feedback message banner */}
+        {syncFeedback && (
+          <div className="p-3 bg-white rounded-xl border border-[#EAE5DC] text-xs font-semibold text-[#111110] shadow-sm animate-in fade-in duration-200">
+            {syncFeedback}
+          </div>
+        )}
+
+        {/* Action Buttons Grid */}
+        <div className="grid grid-cols-2 gap-2 pt-1">
+          {user ? (
+            <button
+              onClick={handleManualSync}
+              disabled={isSyncingCloud}
+              className="py-2.5 px-3 bg-[#18181B] text-white hover:bg-[#2C2C30] rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all disabled:opacity-50"
+            >
+              <RefreshCw size={13} className={isSyncingCloud ? 'animate-spin' : ''} />
+              <span>{isSyncingCloud ? 'Sincronizando...' : 'Sincronizar Agora'}</span>
+            </button>
+          ) : (
+            <button
+              onClick={onOpenAuthModal}
+              className="py-2.5 px-3 bg-[#18181B] text-white hover:bg-[#2C2C30] rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all"
+            >
+              <Cloud size={13} />
+              <span>Conectar ao Firebase</span>
+            </button>
+          )}
+
+          {user ? (
+            <button
+              onClick={onOpenAuthModal}
+              className="py-2.5 px-3 bg-[#F2EDE4] hover:bg-[#EAE3D6] text-[#111110] rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95 transition-all"
+            >
+              <span>Gerenciar Conta</span>
+            </button>
+          ) : (
+            <button
+              onClick={handleDownloadBackup}
+              className="py-2.5 px-3 bg-[#F2EDE4] hover:bg-[#EAE3D6] text-[#111110] rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95 transition-all"
+            >
+              <span>Baixar Backup</span>
+            </button>
+          )}
+        </div>
+
+        {/* Extra Security Download / Restore Row */}
+        <div className="pt-2 border-t border-[#EAE5DC]/80 flex items-center justify-between text-[11px] text-[#78756E]">
           <button
-            onClick={onOpenAuthModal}
-            className={`py-2 px-3.5 rounded-xl text-xs font-bold transition-all active:scale-95 ${
-              user
-                ? 'bg-[#F2EDE4] text-[#111110] hover:bg-[#EAE3D6]'
-                : 'bg-[#18181B] text-white hover:bg-[#2A2A2E] shadow-xs'
-            }`}
+            onClick={handleDownloadBackup}
+            className="text-[#8C6D38] hover:text-[#684F25] font-semibold underline underline-offset-2 flex items-center gap-1"
           >
-            {user ? 'Minha Conta' : 'Conectar'}
+            <span>📥 Baixar cópia de segurança (JSON)</span>
           </button>
+
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="text-[#78756E] hover:text-[#111110] font-medium"
+          >
+            Restaurar arquivo
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json"
+            onChange={handleFileUpload}
+            className="hidden"
+          />
         </div>
       </div>
 

@@ -76,6 +76,7 @@ export default function App() {
       <TopBar
         onAddClick={() => setIsAddModalOpen(true)}
         onPwaClick={() => setIsPwaModalOpen(true)}
+        onAuthClick={() => setIsAuthModalOpen(true)}
         wardrobeCount={wardrobe.length}
       />
 
@@ -98,6 +99,7 @@ export default function App() {
           <WardrobeTab
             onSelectItem={(item) => setSelectedItem(item)}
             onOpenAddModal={() => setIsAddModalOpen(true)}
+            onOpenAuthModal={() => setIsAuthModalOpen(true)}
           />
         )}
 
