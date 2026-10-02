@@ -362,6 +362,7 @@ export class OutfitGenerator {
       encontro: 'Encontro Charmoso',
       festa: 'Festa & Brilho',
       casual: 'Casual Despretensioso',
+      passeio: 'Passeio & Lazer',
       praia: 'Frescor & Brisa',
       noite: 'Noite Urbana',
       esporte: 'Athleisure Conforto',

@@ -27,7 +27,7 @@ Retorne ESTRITAMENTE um JSON no seguinte formato (sem formatação markdown extr
   "subCategory": "Tipo exato da peça em português (ex: Short Jeans, Jaqueta de Couro, Calça Alfaiataria, Camiseta Básica, Camisa Social, Vestido Midi)",
   "color": { "name": "${color?.name || 'Cor'}", "hex": "${color?.hex || '#333333'}", "family": "${color?.family || 'neutro'}" },
   "style": "minimalista" | "casual" | "elegante" | "social" | "streetwear" | "romantico" | "confortavel" | "moderno",
-  "occasions": ["casual", "trabalho", "jantar", "encontro", "festa", "noite"],
+  "occasions": ["casual", "passeio", "trabalho", "jantar", "encontro", "festa", "noite"],
   "seasons": ["todas"],
   "formality": 2,
   "material": "Denim | Algodão | Couro | Linho | Seda | etc",

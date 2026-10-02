@@ -30,6 +30,7 @@ export type ClothingOccasion =
   | 'encontro'
   | 'festa'
   | 'casual'
+  | 'passeio'
   | 'praia'
   | 'noite'
   | 'esporte'

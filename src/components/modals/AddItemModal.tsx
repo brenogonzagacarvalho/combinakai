@@ -58,9 +58,12 @@ const OCCASIONS: Array<{ id: ClothingOccasion; label: string; icon: string }> = 
   { id: 'encontro', label: 'Encontro', icon: '❤️' },
   { id: 'festa', label: 'Festa', icon: '🎉' },
   { id: 'casual', label: 'Dia Casual', icon: '☀️' },
+  { id: 'passeio', label: 'Passeio', icon: '🚶‍♀️' },
   { id: 'noite', label: 'Noite', icon: '🌙' },
   { id: 'praia', label: 'Praia', icon: '🏖️' },
   { id: 'viagem', label: 'Viagem', icon: '✈️' },
+  { id: 'evento', label: 'Evento', icon: '⛪' },
+  { id: 'esporte', label: 'Esporte', icon: '🏃' },
 ];
 
 export const AddItemModal: React.FC<AddItemModalProps> = ({
