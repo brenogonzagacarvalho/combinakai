@@ -6,40 +6,24 @@ import {
   deleteDoc,
   updateDoc,
 } from 'firebase/firestore';
-import { ref, uploadString, getDownloadURL, deleteObject } from 'firebase/storage';
-import { db, storage } from './config';
+import { db } from './config';
 import { ClothingItem, Outfit, CalendarEntry } from '@/types/wardrobe';
 
 export class FirebaseWardrobeService {
   /**
-   * Uploads a garment photo to Firebase Storage and returns the permanent CDN URL
+   * Stores garment images directly in Firestore (100% Free, no Storage / Credit Card required)
    */
   static async uploadGarmentImage(
-    userId: string,
-    itemId: string,
+    _userId: string,
+    _itemId: string,
     imageDataUrl: string
   ): Promise<string> {
-    if (!storage) return imageDataUrl;
-
-    try {
-      // If it's an SVG data url from demo items, no need to upload
-      if (imageDataUrl.startsWith('data:image/svg+xml')) {
-        return imageDataUrl;
-      }
-
-      const storageRef = ref(storage, `users/${userId}/clothes/${itemId}.jpg`);
-      await uploadString(storageRef, imageDataUrl, 'data_url');
-      const downloadUrl = await getDownloadURL(storageRef);
-      return downloadUrl;
-    } catch (err) {
-      console.error('Firebase Storage upload error:', err);
-      // Fallback to original image data url if storage upload fails
-      return imageDataUrl;
-    }
+    // Returns the optimized base64 image data URL directly to be stored in Firestore
+    return imageDataUrl;
   }
 
   /**
-   * Saves a clothing item to Firestore
+   * Saves a clothing item directly to Firestore
    */
   static async saveItem(userId: string, item: ClothingItem): Promise<void> {
     if (!db) return;
@@ -71,23 +55,13 @@ export class FirebaseWardrobeService {
   }
 
   /**
-   * Deletes an item from Firestore and Storage
+   * Deletes an item from Firestore
    */
   static async deleteItem(userId: string, itemId: string): Promise<void> {
     if (!db) return;
     try {
       const itemRef = doc(db, 'users', userId, 'wardrobe', itemId);
       await deleteDoc(itemRef);
-
-      // Attempt to delete photo from storage
-      if (storage) {
-        try {
-          const storageRef = ref(storage, `users/${userId}/clothes/${itemId}.jpg`);
-          await deleteObject(storageRef);
-        } catch {
-          // Ignore if image was an external url or svg
-        }
-      }
     } catch (err) {
       console.error('Error deleting item from Firestore:', err);
       throw err;
@@ -95,7 +69,7 @@ export class FirebaseWardrobeService {
   }
 
   /**
-   * Fetches all wardrobe items for a user
+   * Fetches all wardrobe items for a user from Firestore
    */
   static async loadWardrobe(userId: string): Promise<ClothingItem[]> {
     if (!db) return [];
