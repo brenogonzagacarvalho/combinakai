@@ -7,22 +7,30 @@ export async function POST(req: NextRequest) {
     const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
-      return NextResponse.json({ fallback: true, message: 'Gemini API Key not provided, using local heuristic' });
+      return NextResponse.json({ fallback: true, message: 'Gemini API Key not provided' });
     }
 
     const prompt = `
-Você é um Personal Stylist e especialista em moda.
-Analise esta peça de roupa e a cor predominante informada (${color?.name || 'neutra'}).
-Retorne ESTRITAMENTE um JSON válido no formato abaixo, sem texto adicional:
+Você é um especialista em moda e Personal Stylist.
+Analise a imagem da peça de roupa fornecida com atenção aos detalhes do corte.
+Identifique com precisão:
+- Se for calça, bermuda ou short: a category DEVE ser "bottoms".
+- Se for jaqueta, casaco, blazer ou corta-vento: a category DEVE ser "outerwear".
+- Se for camisa, camiseta, blusa, cropped: a category DEVE ser "tops".
+- Se for vestido: a category DEVE ser "dresses".
+- Se for tênis, bota, salto, sandália: a category DEVE ser "shoes".
+- Se for bolsa, cinto, boné, óculos: a category DEVE ser "accessories".
+
+Retorne ESTRITAMENTE um JSON no seguinte formato (sem formatação markdown extra, apenas o json):
 {
   "category": "tops" | "bottoms" | "dresses" | "outerwear" | "shoes" | "accessories",
-  "subCategory": "Nome específico em português (ex: Camisa Social, Camiseta Básica, Calça Jeans, Blazer)",
-  "color": { "name": "${color?.name || 'Cor'}", "hex": "${color?.hex || '#333333'}", "family": "${color?.family || 'azul'}" },
+  "subCategory": "Tipo exato da peça em português (ex: Short Jeans, Jaqueta de Couro, Calça Alfaiataria, Camiseta Básica, Camisa Social, Vestido Midi)",
+  "color": { "name": "${color?.name || 'Cor'}", "hex": "${color?.hex || '#333333'}", "family": "${color?.family || 'neutro'}" },
   "style": "minimalista" | "casual" | "elegante" | "social" | "streetwear" | "romantico" | "confortavel" | "moderno",
-  "occasions": ["trabalho", "jantar", "encontro", "festa", "casual", "praia", "noite", "viagem"],
-  "seasons": ["verao", "inverno", "meia-estacao", "todas"],
-  "formality": 3,
-  "material": "Algodão | Linho | Denim | Seda | Couro | etc",
+  "occasions": ["casual", "trabalho", "jantar", "encontro", "festa", "noite"],
+  "seasons": ["todas"],
+  "formality": 2,
+  "material": "Denim | Algodão | Couro | Linho | Seda | etc",
   "confidence": 0.95
 }
 `;
@@ -30,12 +38,12 @@ Retorne ESTRITAMENTE um JSON válido no formato abaixo, sem texto adicional:
     // Strip base64 prefix if present
     const base64Data = image && image.includes('base64,') ? image.split('base64,')[1] : image;
 
-    // Supported models in priority order
+    // Use ultrafast responsive Gemini models
     const candidateModels = [
-      'gemini-flash-latest',
+      'gemini-flash-lite-latest',
+      'gemini-3.1-flash-lite-preview',
       'gemini-3.8-flash',
-      'gemini-2.5-flash-lite',
-      'gemini-2.5-flash',
+      'gemini-flash-latest',
     ];
 
     for (const model of candidateModels) {
@@ -51,10 +59,14 @@ Retorne ESTRITAMENTE um JSON válido no formato abaixo, sem texto adicional:
           });
         }
 
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 7000); // 7s timeout per candidate
+
         const res = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
           {
             method: 'POST',
+            signal: controller.signal,
             headers: {
               'Content-Type': 'application/json',
               'X-goog-api-key': apiKey,
@@ -68,22 +80,24 @@ Retorne ESTRITAMENTE um JSON válido no formato abaixo, sem texto adicional:
           }
         );
 
+        clearTimeout(timeoutId);
+
         if (res.ok) {
           const data = await res.json();
           const candidateText = data.candidates?.[0]?.content?.parts?.[0]?.text;
           if (candidateText) {
-            const parsed = JSON.parse(candidateText);
+            const cleanJson = candidateText.replace(/```json/g, '').replace(/```/g, '').trim();
+            const parsed = JSON.parse(cleanJson);
             return NextResponse.json({ classification: parsed, modelUsed: model });
           }
         }
-      } catch {
+      } catch (e) {
         // Try next candidate model
         continue;
       }
     }
 
-    // Graceful fallback to local heuristic engine if API is unavailable or busy
-    return NextResponse.json({ fallback: true, message: 'Google API unavailable or busy, falling back to local heuristic' });
+    return NextResponse.json({ fallback: true, message: 'Gemini models busy, fallback applied' });
   } catch (error) {
     console.error('AI analyze error:', error);
     return NextResponse.json({ fallback: true });

@@ -39,7 +39,7 @@ export class AIService {
 
       if (response.ok) {
         const data = await response.json();
-        if (data.classification) {
+        if (data.classification && !data.fallback) {
           return data.classification;
         }
       }
@@ -51,79 +51,19 @@ export class AIService {
   }
 
   /**
-   * Smart local classifier based on garment color tones, common wardrobe ergonomics
+   * Neutral local fallback when AI vision is temporarily unavailable
    */
   private static heuristicClassification(dominantColor: ColorInfo): GarmentClassificationResult {
-    const family = dominantColor.family;
-
-    // Smart default heuristics based on color and fashion norms
-    if (family === 'azul') {
-      return {
-        category: 'tops',
-        subCategory: 'Camisa Social Azul',
-        color: dominantColor,
-        style: 'elegante',
-        occasions: ['trabalho', 'jantar', 'encontro', 'casual'],
-        seasons: ['todas'],
-        formality: 3,
-        material: 'Algodão Nobre',
-        confidence: 0.92,
-      };
-    }
-
-    if (family === 'preto') {
-      return {
-        category: 'bottoms',
-        subCategory: 'Calça Alfaiataria Preta',
-        color: dominantColor,
-        style: 'social',
-        occasions: ['trabalho', 'jantar', 'evento', 'noite'],
-        seasons: ['todas'],
-        formality: 4,
-        material: 'Sarja / Crepe',
-        confidence: 0.9,
-      };
-    }
-
-    if (family === 'bege' || family === 'marrom') {
-      return {
-        category: 'bottoms',
-        subCategory: 'Calça Chino Bege',
-        color: dominantColor,
-        style: 'casual',
-        occasions: ['casual', 'trabalho', 'jantar'],
-        seasons: ['todas'],
-        formality: 3,
-        material: 'Sarja de Algodão',
-        confidence: 0.88,
-      };
-    }
-
-    if (family === 'vermelho' || family === 'rosa') {
-      return {
-        category: 'dresses',
-        subCategory: 'Vestido Fluido',
-        color: dominantColor,
-        style: 'romantico',
-        occasions: ['festa', 'jantar', 'encontro'],
-        seasons: ['verao', 'meia-estacao'],
-        formality: 4,
-        material: 'Seda / Chiffon',
-        confidence: 0.89,
-      };
-    }
-
-    // Default neutral (branco / cinza)
     return {
       category: 'tops',
-      subCategory: 'Camiseta Básica Algodão',
+      subCategory: '',
       color: dominantColor,
-      style: 'minimalista',
-      occasions: ['casual', 'viagem', 'encontro'],
+      style: 'casual',
+      occasions: ['casual', 'jantar'],
       seasons: ['todas'],
-      formality: 1,
-      material: 'Algodão Pima',
-      confidence: 0.85,
+      formality: 2,
+      material: 'Tecido',
+      confidence: 0.7,
     };
   }
 }

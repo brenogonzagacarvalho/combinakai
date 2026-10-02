@@ -20,10 +20,10 @@ interface WardrobeTabProps {
 
 const CATEGORY_TABS: Array<{ id: ClothingCategory | 'all'; label: string; icon: string }> = [
   { id: 'all', label: 'Todos', icon: '✨' },
-  { id: 'tops', label: 'Tops', icon: '👕' },
-  { id: 'bottoms', label: 'Calças', icon: '👖' },
+  { id: 'tops', label: 'Tops / Camisas', icon: '👕' },
+  { id: 'bottoms', label: 'Calças / Shorts', icon: '👖' },
+  { id: 'outerwear', label: 'Casacos / Jaquetas', icon: '🧥' },
   { id: 'dresses', label: 'Vestidos', icon: '👗' },
-  { id: 'outerwear', label: 'Casacos', icon: '🧥' },
   { id: 'shoes', label: 'Calçados', icon: '👟' },
   { id: 'accessories', label: 'Acessórios', icon: '👜' },
 ];
@@ -235,8 +235,8 @@ export const WardrobeTab: React.FC<WardrobeTabProps> = ({
 
               {/* Title & Metadata */}
               <div className="space-y-0.5">
-                <span className="text-[10px] text-[#78756E] uppercase tracking-wider font-semibold block">
-                  {item.subCategory}
+                <span className="text-[10px] text-[#C29F68] font-bold uppercase tracking-wider block truncate">
+                  {item.subCategory || item.category}
                 </span>
                 <h3 className="font-serif text-xs font-bold text-[#111110] line-clamp-1">
                   {item.name}

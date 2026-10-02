@@ -26,11 +26,20 @@ interface AddItemModalProps {
 const CATEGORIES: Array<{ id: ClothingCategory; label: string; icon: string }> = [
   { id: 'tops', label: 'Tops / Camisas', icon: '👕' },
   { id: 'bottoms', label: 'Calças / Shorts', icon: '👖' },
+  { id: 'outerwear', label: 'Casacos / Jaquetas', icon: '🧥' },
   { id: 'dresses', label: 'Vestidos', icon: '👗' },
-  { id: 'outerwear', label: 'Casacos / Blazers', icon: '🧥' },
   { id: 'shoes', label: 'Calçados', icon: '👟' },
   { id: 'accessories', label: 'Acessórios / Bolsas', icon: '👜' },
 ];
+
+const QUICK_TYPES_BY_CATEGORY: Record<ClothingCategory, string[]> = {
+  bottoms: ['Short Jeans', 'Short Alfaiataria', 'Calça Jeans', 'Calça Alfaiataria', 'Calça Chino', 'Bermuda', 'Saia'],
+  outerwear: ['Jaqueta de Couro', 'Jaqueta Jeans', 'Blazer', 'Casaco', 'Casaquinho', 'Corta-vento'],
+  tops: ['Camiseta Básica', 'Camisa Social', 'Camisa de Linho', 'Camisa Manga Longa', 'Cropped', 'Regata', 'Blusa'],
+  dresses: ['Vestido Midi', 'Vestido Curto', 'Vestido Longo', 'Vestido Fluido'],
+  shoes: ['Tênis Casual', 'Tênis Branco', 'Salto Bloco', 'Salto Fino', 'Bota', 'Sandália'],
+  accessories: ['Bolsa Tiracolo', 'Bolsa de Ombro', 'Cinto de Couro', 'Óculos de Sol'],
+};
 
 const STYLES: ClothingStyle[] = [
   'minimalista',
@@ -69,8 +78,8 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
   const [name, setName] = useState('');
   const [category, setCategory] = useState<ClothingCategory>('tops');
   const [subCategory, setSubCategory] = useState('');
-  const [colorName, setColorName] = useState('Azul Celeste');
-  const [colorHex, setColorHex] = useState('#6EA0D6');
+  const [colorName, setColorName] = useState('Azul');
+  const [colorHex, setColorHex] = useState('#3B6B9B');
   const [colorFamily, setColorFamily] = useState<any>('azul');
   const [style, setStyle] = useState<ClothingStyle>('casual');
   const [formality, setFormality] = useState<1 | 2 | 3 | 4 | 5>(3);
@@ -83,11 +92,44 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
     setStep('upload');
     setPhotoDataUrl(null);
     setName('');
+    setSubCategory('');
   };
 
   const handleClose = () => {
     resetState();
     onClose();
+  };
+
+  const handleCategoryChange = (newCat: ClothingCategory) => {
+    setCategory(newCat);
+    const defaults = QUICK_TYPES_BY_CATEGORY[newCat];
+    if (defaults && defaults.length > 0) {
+      setSubCategory(defaults[0]);
+      if (!name) setName(defaults[0]);
+    }
+  };
+
+  const handleNameChange = (newName: string) => {
+    setName(newName);
+    const lower = newName.toLowerCase();
+
+    // Auto-detect category and type if recognized from name
+    if (lower.includes('short') || lower.includes('bermuda')) {
+      setCategory('bottoms');
+      setSubCategory(lower.includes('short') ? 'Short Jeans' : 'Bermuda');
+    } else if (lower.includes('jaqueta') || lower.includes('casaco') || lower.includes('casaquinho') || lower.includes('blazer')) {
+      setCategory('outerwear');
+      setSubCategory(lower.includes('jaqueta') ? 'Jaqueta de Couro' : lower.includes('casaquinho') ? 'Casaquinho' : 'Casaco / Blazer');
+    } else if (lower.includes('vestido')) {
+      setCategory('dresses');
+      setSubCategory('Vestido');
+    } else if (lower.includes('calça')) {
+      setCategory('bottoms');
+      setSubCategory('Calça Jeans');
+    } else if (lower.includes('camisa') || lower.includes('camiseta') || lower.includes('blusa') || lower.includes('cropped')) {
+      setCategory('tops');
+      setSubCategory(lower.includes('camisa') ? 'Camisa' : 'Camiseta');
+    }
   };
 
   const handleFileSelected = async (file: File) => {
@@ -101,15 +143,16 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
       const aiResult = await AIService.classifyGarment(processed.dataUrl, processed.dominantColor);
 
       // 3. Populate form with AI tags
-      setName(aiResult.subCategory);
-      setCategory(aiResult.category);
-      setSubCategory(aiResult.subCategory);
+      const detectedSub = aiResult.subCategory || 'Nova Peça';
+      setName(detectedSub);
+      setCategory(aiResult.category || 'tops');
+      setSubCategory(detectedSub);
       setColorName(aiResult.color.name);
       setColorHex(aiResult.color.hex);
       setColorFamily(aiResult.color.family);
-      setStyle(aiResult.style);
-      setFormality(aiResult.formality);
-      setOccasions(aiResult.occasions);
+      setStyle(aiResult.style || 'casual');
+      setFormality(aiResult.formality || 2);
+      setOccasions(aiResult.occasions || ['casual']);
       if (aiResult.material) setMaterial(aiResult.material);
 
       setStep('confirm');
@@ -120,6 +163,7 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
       reader.onload = (e) => {
         setPhotoDataUrl(e.target?.result as string);
         setName('Minha Peça');
+        setSubCategory('Peça');
         setStep('confirm');
       };
       reader.readAsDataURL(file);
@@ -139,11 +183,14 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
   const handleSave = () => {
     if (!photoDataUrl) return;
 
+    const finalSub = subCategory.trim() || name.trim() || 'Peça do Armário';
+    const finalName = name.trim() || finalSub;
+
     const newItem: ClothingItem = {
       id: `item-user-${Date.now()}`,
-      name: name.trim() || subCategory || 'Peça do Armário',
+      name: finalName,
       category,
-      subCategory: subCategory.trim() || name.trim(),
+      subCategory: finalSub,
       imageUrl: photoDataUrl,
       color: {
         name: colorName,
@@ -275,10 +322,10 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
               </div>
               <div>
                 <h3 className="font-serif font-bold text-lg text-[#111110]">
-                  Identificando sua roupa...
+                  Identificando sua roupa com IA...
                 </h3>
                 <p className="text-xs text-[#78756E] mt-1 max-w-xs">
-                  Detectando corte, cor predominante, estilo e ocasiões ideais.
+                  Detectando corte, categoria exata, cor predominante e estilo.
                 </p>
               </div>
             </div>
@@ -286,9 +333,9 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
 
           {/* STEP 3: CONFIRM & EDIT METADATA */}
           {step === 'confirm' && photoDataUrl && (
-            <div className="space-y-5">
+            <div className="space-y-4">
               {/* Photo Preview Card */}
-              <div className="relative aspect-square max-h-56 mx-auto rounded-2xl overflow-hidden border border-[#EAE5DC] bg-white shadow-sm flex items-center justify-center">
+              <div className="relative aspect-square max-h-52 mx-auto rounded-2xl overflow-hidden border border-[#EAE5DC] bg-white shadow-sm flex items-center justify-center">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={photoDataUrl}
@@ -306,15 +353,15 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
 
               {/* Garment Name Input */}
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-[#4A4843] uppercase tracking-wider">
+                <label className="text-xs font-semibold text-[#4A4843] uppercase tracking-wider block">
                   Nome da Peça
                 </label>
                 <input
                   type="text"
                   value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Ex: Camisa Social Azul, Calça Jeans Reta"
-                  className="w-full px-3.5 py-2.5 bg-white border border-[#DDD7CC] rounded-xl text-sm font-medium text-[#111110] focus:outline-none focus:ring-2 focus:ring-[#C29F68]"
+                  onChange={(e) => handleNameChange(e.target.value)}
+                  placeholder="Ex: Short jeans 2000's, Jaqueta de Couro..."
+                  className="w-full px-3.5 py-2.5 bg-white border border-[#DDD7CC] rounded-xl text-sm font-bold text-[#111110] focus:outline-none focus:ring-2 focus:ring-[#C29F68]"
                 />
               </div>
 
@@ -322,14 +369,14 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-[#4A4843] uppercase tracking-wider flex items-center gap-1">
                   <Layers size={13} />
-                  <span>Categoria</span>
+                  <span>Categoria Principal</span>
                 </label>
                 <div className="grid grid-cols-2 gap-2">
                   {CATEGORIES.map((cat) => (
                     <button
                       key={cat.id}
                       type="button"
-                      onClick={() => setCategory(cat.id)}
+                      onClick={() => handleCategoryChange(cat.id)}
                       className={`flex items-center gap-2 p-2.5 rounded-xl border text-xs font-medium text-left transition-all ${
                         category === cat.id
                           ? 'bg-[#18181B] text-white border-[#18181B] shadow-sm'
@@ -338,6 +385,38 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
                     >
                       <span className="text-base">{cat.icon}</span>
                       <span className="truncate">{cat.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* SubCategory / Tipo Exato com Quick Chips */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-[#4A4843] uppercase tracking-wider block">
+                  Tipo da Peça (Subcategoria)
+                </label>
+                <input
+                  type="text"
+                  value={subCategory}
+                  onChange={(e) => setSubCategory(e.target.value)}
+                  placeholder="Ex: Short Jeans, Jaqueta, Camisa..."
+                  className="w-full px-3.5 py-2.5 bg-white border border-[#DDD7CC] rounded-xl text-xs font-semibold text-[#111110] focus:outline-none focus:ring-2 focus:ring-[#C29F68]"
+                />
+
+                {/* Quick Suggestion Chips */}
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {QUICK_TYPES_BY_CATEGORY[category]?.map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setSubCategory(t)}
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-medium transition-all ${
+                        subCategory === t
+                          ? 'bg-[#C29F68] text-white'
+                          : 'bg-white border border-[#EAE5DC] text-[#68655E] hover:bg-[#F2EDE4]'
+                      }`}
+                    >
+                      {t}
                     </button>
                   ))}
                 </div>
@@ -352,7 +431,7 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
                   </label>
                   <div className="flex items-center gap-2 bg-white border border-[#DDD7CC] rounded-xl p-2">
                     <div
-                      className="w-6 h-6 rounded-full border border-black/10 shrink-0"
+                      className="w-5 h-5 rounded-full border border-black/10 shrink-0"
                       style={{ backgroundColor: colorHex }}
                     />
                     <input
@@ -372,7 +451,7 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
                     type="text"
                     value={material}
                     onChange={(e) => setMaterial(e.target.value)}
-                    placeholder="Ex: Algodão, Linho"
+                    placeholder="Ex: Denim, Couro, Algodão"
                     className="w-full px-3 py-2 bg-white border border-[#DDD7CC] rounded-xl text-xs font-medium focus:outline-none"
                   />
                 </div>
@@ -380,7 +459,7 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
 
               {/* Style Selector */}
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-[#4A4843] uppercase tracking-wider">
+                <label className="text-xs font-semibold text-[#4A4843] uppercase tracking-wider block">
                   Estilo
                 </label>
                 <div className="flex flex-wrap gap-1.5">
@@ -433,7 +512,7 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
 
               {/* Occasions Multi-select */}
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-[#4A4843] uppercase tracking-wider">
+                <label className="text-xs font-semibold text-[#4A4843] uppercase tracking-wider block">
                   Ocasiões Recomendadas
                 </label>
                 <div className="flex flex-wrap gap-1.5">

@@ -40,6 +40,47 @@ const STORAGE_KEYS = {
   IS_DEMO: 'combinakai_is_demo_v2',
 };
 
+function autoSanitizeItem(item: ClothingItem): ClothingItem {
+  const nameLower = (item.name || '').toLowerCase();
+  const subLower = (item.subCategory || '').toLowerCase();
+  let updated = { ...item };
+
+  // Shorts / Bermudas
+  if (nameLower.includes('short') || nameLower.includes('bermuda')) {
+    if (updated.category !== 'bottoms') updated.category = 'bottoms';
+    if (!updated.subCategory || subLower.includes('camisa') || subLower.includes('vestido') || subLower.includes('casaco')) {
+      updated.subCategory = nameLower.includes('short') ? 'Short Jeans' : 'Bermuda';
+    }
+  }
+  // Jaquetas / Casacos / Blazers
+  else if (nameLower.includes('jaqueta') || nameLower.includes('casaco') || nameLower.includes('casaquinho') || nameLower.includes('blazer')) {
+    if (updated.category !== 'outerwear') updated.category = 'outerwear';
+    if (!updated.subCategory || subLower.includes('calça') || subLower.includes('vestido') || subLower.includes('camisa')) {
+      updated.subCategory = nameLower.includes('jaqueta') ? 'Jaqueta' : nameLower.includes('casaquinho') ? 'Casaquinho' : 'Casaco / Blazer';
+    }
+  }
+  // Calças
+  else if (nameLower.includes('calça')) {
+    if (updated.category !== 'bottoms') updated.category = 'bottoms';
+    if (!updated.subCategory || subLower.includes('camisa') || subLower.includes('vestido')) {
+      updated.subCategory = 'Calça';
+    }
+  }
+  // Vestidos
+  else if (nameLower.includes('vestido')) {
+    if (updated.category !== 'dresses') updated.category = 'dresses';
+  }
+  // Camisas / Camisetas / Tops
+  else if (nameLower.includes('camisa') || nameLower.includes('camiseta') || nameLower.includes('blusa') || nameLower.includes('cropped')) {
+    if (updated.category !== 'tops') updated.category = 'tops';
+    if (nameLower.includes('camisa') && subLower.includes('camiseta básica')) {
+      updated.subCategory = 'Camisa';
+    }
+  }
+
+  return updated;
+}
+
 export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [wardrobe, setWardrobe] = useState<ClothingItem[]>([]);
   const [savedOutfits, setSavedOutfits] = useState<Outfit[]>([]);
@@ -58,8 +99,11 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       const storedIsDemo = localStorage.getItem(STORAGE_KEYS.IS_DEMO);
 
       if (storedWardrobe) {
-        setWardrobe(JSON.parse(storedWardrobe));
+        const parsedItems: ClothingItem[] = JSON.parse(storedWardrobe);
+        const sanitized = parsedItems.map(autoSanitizeItem);
+        setWardrobe(sanitized);
         setIsDemoActive(storedIsDemo === 'true');
+        localStorage.setItem(STORAGE_KEYS.WARDROBE, JSON.stringify(sanitized));
       } else {
         // First access: load mock starter wardrobe so user can experience the app immediately!
         setWardrobe(INITIAL_MOCK_WARDROBE);
