@@ -10,6 +10,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ fallback: true, message: 'Gemini API Key not provided' });
     }
 
+    // Input validation & DoS payload protection
+    if (!image || typeof image !== 'string' || image.length < 50) {
+      return NextResponse.json({ fallback: true, message: 'Imagem inválida ou ausente' }, { status: 400 });
+    }
+
+    // Reject payloads exceeding 4MB to prevent memory exhaustion
+    if (image.length > 4 * 1024 * 1024) {
+      return NextResponse.json({ fallback: true, message: 'Tamanho da imagem excede o limite máximo permitido' }, { status: 413 });
+    }
+
     const prompt = `
 Você é um especialista em moda e Personal Stylist.
 Analise a imagem da peça de roupa fornecida com atenção aos detalhes do corte.
