@@ -91,8 +91,8 @@ export async function processGarmentImage(fileOrUrl: File | string): Promise<Pro
           throw new Error('Canvas context unavailable');
         }
 
-        // Target luxury catalog dimensions (800x800 square with clean framing)
-        const targetSize = 800;
+        // Target luxury catalog dimensions (640x640 square with clean framing, ideal for mobile storage)
+        const targetSize = 640;
         canvas.width = targetSize;
         canvas.height = targetSize;
 
@@ -112,7 +112,7 @@ export async function processGarmentImage(fileOrUrl: File | string): Promise<Pro
         ctx.fillRect(0, 0, targetSize, targetSize);
 
         // Aspect ratio cover/contain calculation with padding
-        const padding = 40;
+        const padding = 32;
         const maxDrawWidth = targetSize - padding * 2;
         const maxDrawHeight = targetSize - padding * 2;
 
@@ -125,8 +125,8 @@ export async function processGarmentImage(fileOrUrl: File | string): Promise<Pro
         // Soft studio shadow under garment
         ctx.save();
         ctx.shadowColor = 'rgba(0, 0, 0, 0.08)';
-        ctx.shadowBlur = 24;
-        ctx.shadowOffsetY = 12;
+        ctx.shadowBlur = 20;
+        ctx.shadowOffsetY = 10;
 
         // Draw image onto canvas
         ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
@@ -173,13 +173,13 @@ export async function processGarmentImage(fileOrUrl: File | string): Promise<Pro
         }
 
         const dominant = findClosestColor(avgR, avgG, avgB);
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.80);
         let rawOriginal = '';
         if (typeof fileOrUrl === 'string') {
           rawOriginal = fileOrUrl;
         } else {
           try {
-            rawOriginal = canvas.toDataURL('image/jpeg', 0.9);
+            rawOriginal = canvas.toDataURL('image/jpeg', 0.80);
           } catch {
             rawOriginal = dataUrl;
           }
@@ -233,7 +233,7 @@ export async function autoCropAndEnhanceGarment(
         const ctx = canvas.getContext('2d');
         if (!ctx) throw new Error('Canvas context unavailable');
 
-        const targetSize = 800;
+        const targetSize = 640;
         canvas.width = targetSize;
         canvas.height = targetSize;
 
@@ -276,8 +276,8 @@ export async function autoCropAndEnhanceGarment(
           srcH = Math.min(img.height - srcY, rawH + padY * 2);
         }
 
-        // Draw centered in 800x800 luxury square with 45px padding
-        const padding = 45;
+        // Draw centered in 640x640 luxury square with 36px padding
+        const padding = 36;
         const maxDrawW = targetSize - padding * 2;
         const maxDrawH = targetSize - padding * 2;
         const scale = Math.min(maxDrawW / srcW, maxDrawH / srcH);
@@ -289,8 +289,8 @@ export async function autoCropAndEnhanceGarment(
         // Apply soft catalog drop shadow under piece
         ctx.save();
         ctx.shadowColor = 'rgba(0, 0, 0, 0.09)';
-        ctx.shadowBlur = 24;
-        ctx.shadowOffsetY = 12;
+        ctx.shadowBlur = 20;
+        ctx.shadowOffsetY = 10;
 
         // Slight image contrast and brightness enhancement
         if (typeof ctx.filter !== 'undefined') {
@@ -300,7 +300,7 @@ export async function autoCropAndEnhanceGarment(
         ctx.drawImage(img, srcX, srcY, srcW, srcH, drawX, drawY, drawW, drawH);
         ctx.restore();
 
-        resolve(canvas.toDataURL('image/jpeg', 0.88));
+        resolve(canvas.toDataURL('image/jpeg', 0.80));
       } catch (e) {
         reject(e);
       }
@@ -323,7 +323,7 @@ export async function placeCutoutOnStudioCanvas(cutoutPngDataUrl: string): Promi
         const ctx = canvas.getContext('2d');
         if (!ctx) throw new Error('Canvas context unavailable');
 
-        const targetSize = 800;
+        const targetSize = 640;
         canvas.width = targetSize;
         canvas.height = targetSize;
 
@@ -342,8 +342,8 @@ export async function placeCutoutOnStudioCanvas(cutoutPngDataUrl: string): Promi
         ctx.fillStyle = radial;
         ctx.fillRect(0, 0, targetSize, targetSize);
 
-        // Aspect ratio contain with 50px margins
-        const padding = 50;
+        // Aspect ratio contain with 40px margins
+        const padding = 40;
         const maxDrawW = targetSize - padding * 2;
         const maxDrawH = targetSize - padding * 2;
         const scale = Math.min(maxDrawW / img.width, maxDrawH / img.height);
@@ -355,13 +355,13 @@ export async function placeCutoutOnStudioCanvas(cutoutPngDataUrl: string): Promi
         // Realistic studio contact shadow under isolated garment
         ctx.save();
         ctx.shadowColor = 'rgba(0, 0, 0, 0.12)';
-        ctx.shadowBlur = 28;
-        ctx.shadowOffsetY = 16;
+        ctx.shadowBlur = 24;
+        ctx.shadowOffsetY = 12;
 
         ctx.drawImage(img, drawX, drawY, drawW, drawH);
         ctx.restore();
 
-        resolve(canvas.toDataURL('image/jpeg', 0.88));
+        resolve(canvas.toDataURL('image/jpeg', 0.80));
       } catch (e) {
         reject(e);
       }

@@ -26,7 +26,7 @@ import confetti from 'canvas-confetti';
 interface AddItemModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onItemAdded: (item: ClothingItem) => void;
+  onItemAdded: (item: ClothingItem) => void | Promise<void>;
 }
 
 const CATEGORIES: Array<{ id: ClothingCategory; label: string; icon: string }> = [
@@ -103,10 +103,12 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
   const [formality, setFormality] = useState<1 | 2 | 3 | 4 | 5>(3);
   const [occasions, setOccasions] = useState<ClothingOccasion[]>(['casual', 'jantar']);
   const [material, setMaterial] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
 
   if (!isOpen) return null;
 
   const resetState = () => {
+    setIsSaving(false);
     setStep('upload');
     setPhotoDataUrl(null);
     setRawOriginalUrl(null);
@@ -244,47 +246,59 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
     }
   };
 
-  const handleSave = () => {
-    if (!photoDataUrl) return;
+  const handleSave = async () => {
+    if (!photoDataUrl || isSaving) return;
 
-    const finalSub = subCategory.trim() || name.trim() || 'Peça do Armário';
-    const finalName = name.trim() || finalSub;
-
-    const newItem: ClothingItem = {
-      id: `item-user-${Date.now()}`,
-      name: finalName,
-      category,
-      subCategory: finalSub,
-      imageUrl: photoDataUrl,
-      originalImageUrl: rawOriginalUrl || undefined,
-      color: {
-        name: colorName,
-        hex: colorHex,
-        family: colorFamily,
-      },
-      pattern: 'liso',
-      material: material || 'Tecido',
-      style,
-      occasions,
-      seasons: ['todas'],
-      formality,
-      wearCount: 0,
-      createdAt: new Date().toISOString(),
-    };
-
-    onItemAdded(newItem);
-
-    // Micro-interaction celebration
+    setIsSaving(true);
     try {
-      confetti({
-        particleCount: 40,
-        spread: 60,
-        origin: { y: 0.8 },
-        colors: ['#C29F68', '#111110', '#EAE5DC'],
-      });
-    } catch {}
+      const finalSub = subCategory.trim() || name.trim() || 'Peça do Armário';
+      const finalName = name.trim() || finalSub;
 
-    handleClose();
+      const newItem: ClothingItem = {
+        id: `item-user-${Date.now()}`,
+        name: finalName,
+        category,
+        subCategory: finalSub,
+        imageUrl: photoDataUrl,
+        color: {
+          name: colorName,
+          hex: colorHex,
+          family: colorFamily,
+        },
+        pattern: 'liso',
+        material: material.trim() || 'Tecido',
+        style,
+        occasions: occasions.length > 0 ? occasions : ['casual'],
+        seasons: ['todas'],
+        formality,
+        wearCount: 0,
+        createdAt: new Date().toISOString(),
+      };
+
+      // Only attach originalImageUrl if different from photoDataUrl and present
+      if (rawOriginalUrl && rawOriginalUrl !== photoDataUrl) {
+        newItem.originalImageUrl = rawOriginalUrl;
+      }
+
+      await onItemAdded(newItem);
+
+      // Micro-interaction celebration
+      try {
+        confetti({
+          particleCount: 40,
+          spread: 60,
+          origin: { y: 0.8 },
+          colors: ['#C29F68', '#111110', '#EAE5DC'],
+        });
+      } catch {}
+
+      handleClose();
+    } catch (err: any) {
+      console.error('Error saving item:', err);
+      alert('Não foi possível salvar a peça: ' + (err?.message || 'Erro inesperado'));
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -730,10 +744,20 @@ export const AddItemModal: React.FC<AddItemModalProps> = ({
             </button>
             <button
               onClick={handleSave}
-              className="flex-[2] py-3 px-4 bg-[#18181B] text-[#FBF9F5] rounded-xl text-xs font-semibold flex items-center justify-center gap-2 shadow-md active:scale-95 transition-all hover:bg-[#28282C]"
+              disabled={isSaving}
+              className="flex-[2] py-3 px-4 bg-[#18181B] text-[#FBF9F5] rounded-xl text-xs font-semibold flex items-center justify-center gap-2 shadow-md active:scale-95 transition-all hover:bg-[#28282C] disabled:opacity-50"
             >
-              <Check size={16} className="text-[#E5C799]" />
-              <span>Salvar no Armário</span>
+              {isSaving ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  <span>Salvando peça...</span>
+                </>
+              ) : (
+                <>
+                  <Check size={16} className="text-[#E5C799]" />
+                  <span>Salvar no Armário</span>
+                </>
+              )}
             </button>
           </div>
         )}

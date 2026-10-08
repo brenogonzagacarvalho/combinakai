@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { ClothingItem, Outfit, CalendarEntry } from '@/types/wardrobe';
 import { INITIAL_MOCK_WARDROBE } from '@/data/mockWardrobe';
 import { useAuth } from './AuthContext';
@@ -48,6 +48,35 @@ const STORAGE_KEYS = {
   DISLIKED: 'combinakai_disliked_v2',
   IS_DEMO: 'combinakai_is_demo_v2',
 };
+
+/**
+ * Resilient localStorage writer that protects against QuotaExceededError
+ */
+function safeSaveToLocalStorage(key: string, data: any): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    localStorage.setItem(key, JSON.stringify(data));
+    return true;
+  } catch (err: any) {
+    console.warn(`LocalStorage quota exceeded or write failed for ${key}:`, err?.name, err?.message);
+    // If quota exceeded, try stripping originalImageUrl to save massive amount of memory
+    if (key === STORAGE_KEYS.WARDROBE && Array.isArray(data)) {
+      try {
+        const optimized = data.map((item: ClothingItem) => {
+          const copy = { ...item };
+          if (copy.originalImageUrl) delete copy.originalImageUrl;
+          return copy;
+        });
+        localStorage.setItem(key, JSON.stringify(optimized));
+        console.info('Wardrobe successfully saved with lightweight optimized images!');
+        return true;
+      } catch (fallbackErr) {
+        console.error('Critical: LocalStorage full even after stripping raw images:', fallbackErr);
+      }
+    }
+    return false;
+  }
+}
 
 function autoSanitizeItem(item: ClothingItem): ClothingItem {
   const nameLower = (item.name || '').toLowerCase();
@@ -100,8 +129,10 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [isLoaded, setIsLoaded] = useState(false);
   const [isDemoActive, setIsDemoActive] = useState(true);
   const [isSyncingCloud, setIsSyncingCloud] = useState(false);
-
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
+
+  const isSyncingRef = useRef(false);
+  const lastSyncedUserRef = useRef<string | null>(null);
 
   // Initialize from LocalStorage or Load Demo Wardrobe
   useEffect(() => {
@@ -136,13 +167,13 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         // If user already has 15+ items, it's definitely a customized wardrobe
         const isActuallyDemo = sanitized.length <= 14 && storedIsDemo === 'true';
         setIsDemoActive(isActuallyDemo);
-        localStorage.setItem(STORAGE_KEYS.WARDROBE, JSON.stringify(sanitized));
+        safeSaveToLocalStorage(STORAGE_KEYS.WARDROBE, sanitized);
       } else {
         // First access: load mock starter wardrobe so user can experience the app immediately!
         setWardrobe(INITIAL_MOCK_WARDROBE);
         setIsDemoActive(true);
-        localStorage.setItem(STORAGE_KEYS.WARDROBE, JSON.stringify(INITIAL_MOCK_WARDROBE));
-        localStorage.setItem(STORAGE_KEYS.IS_DEMO, 'true');
+        safeSaveToLocalStorage(STORAGE_KEYS.WARDROBE, INITIAL_MOCK_WARDROBE);
+        safeSaveToLocalStorage(STORAGE_KEYS.IS_DEMO, 'true');
       }
 
       if (storedOutfits) setSavedOutfits(JSON.parse(storedOutfits));
@@ -158,7 +189,8 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   // Safe Non-Destructive Sync with Firebase Firestore
   const syncNow = useCallback(async () => {
-    if (!user) return;
+    if (!user || isSyncingRef.current) return;
+    isSyncingRef.current = true;
     setIsSyncingCloud(true);
     try {
       const cloudItems = await FirebaseWardrobeService.loadWardrobe(user.uid);
@@ -170,74 +202,102 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         localStorage.getItem(STORAGE_KEYS.WARDROBE) ||
         localStorage.getItem('combinakai_wardrobe_v1') ||
         localStorage.getItem('combinakai_wardrobe');
-      const localItems: ClothingItem[] = rawStored ? JSON.parse(rawStored) : wardrobe;
+      let localItems: ClothingItem[] = [];
+      try {
+        localItems = rawStored ? JSON.parse(rawStored) : [];
+      } catch {
+        localItems = [];
+      }
 
-      // 1. NON-DESTRUCTIVE WARDROBE MERGE (NEVER DELETE LOCAL PIECES)
+      // 1. NON-DESTRUCTIVE WARDROBE MERGE (NEVER OVERWRITE USER LOCAL PHOTOS)
       const itemMap = new Map<string, ClothingItem>();
-      // First, include all existing cloud items
-      cloudItems.forEach((ci) => itemMap.set(ci.id, ci));
+      // First, preserve all local items (user's real photos take priority!)
+      localItems.forEach((li) => itemMap.set(li.id, li));
 
-      // Then, merge all local pieces and upload any missing to Firestore
+      // Then, add any cloud items not already present locally
+      cloudItems.forEach((ci) => {
+        if (!itemMap.has(ci.id)) {
+          itemMap.set(ci.id, ci);
+        } else {
+          // If local is missing image but cloud has it, augment
+          const localItem = itemMap.get(ci.id)!;
+          if (!localItem.imageUrl && ci.imageUrl) {
+            itemMap.set(ci.id, { ...localItem, imageUrl: ci.imageUrl });
+          }
+        }
+      });
+
+      // Upload any local items missing in the cloud to Firestore
+      const cloudIdSet = new Set(cloudItems.map((ci) => ci.id));
       for (const li of localItems) {
-        if (!itemMap.has(li.id)) {
-          itemMap.set(li.id, li);
+        if (!cloudIdSet.has(li.id)) {
           try {
             await FirebaseWardrobeService.saveItem(user.uid, li);
-          } catch (e) {
-            console.error('Error saving item to cloud during sync:', e);
+          } catch (e: any) {
+            console.warn(`Could not save item ${li.id} to cloud during sync:`, e?.code || e?.message);
           }
         }
       }
 
       const mergedItems = Array.from(itemMap.values());
       setWardrobe(mergedItems);
-      localStorage.setItem(STORAGE_KEYS.WARDROBE, JSON.stringify(mergedItems));
+      safeSaveToLocalStorage(STORAGE_KEYS.WARDROBE, mergedItems);
       setIsDemoActive(false);
-      localStorage.setItem(STORAGE_KEYS.IS_DEMO, 'false');
+      safeSaveToLocalStorage(STORAGE_KEYS.IS_DEMO, 'false');
 
       // 2. NON-DESTRUCTIVE OUTFITS MERGE
       const outfitMap = new Map<string, Outfit>();
+      const rawOutfits = localStorage.getItem(STORAGE_KEYS.SAVED_OUTFITS);
+      const localOutfits: Outfit[] = rawOutfits ? JSON.parse(rawOutfits) : [];
+      localOutfits.forEach((lo) => outfitMap.set(lo.id, lo));
       cloudOutfits.forEach((co) => outfitMap.set(co.id, co));
-      for (const lo of savedOutfits) {
-        if (!outfitMap.has(lo.id)) {
-          outfitMap.set(lo.id, lo);
+
+      for (const lo of localOutfits) {
+        if (!cloudOutfits.some((co) => co.id === lo.id)) {
           try {
             await FirebaseWardrobeService.saveOutfit(user.uid, lo);
           } catch (e) {
-            console.error('Error saving outfit to cloud:', e);
+            console.warn('Error saving outfit to cloud:', e);
           }
         }
       }
       const mergedOutfits = Array.from(outfitMap.values());
       setSavedOutfits(mergedOutfits);
-      localStorage.setItem(STORAGE_KEYS.SAVED_OUTFITS, JSON.stringify(mergedOutfits));
+      safeSaveToLocalStorage(STORAGE_KEYS.SAVED_OUTFITS, mergedOutfits);
 
       // 3. CALENDAR MERGE
       const calMap = new Map<string, CalendarEntry>();
+      const rawCal = localStorage.getItem(STORAGE_KEYS.CALENDAR);
+      const localCal: CalendarEntry[] = rawCal ? JSON.parse(rawCal) : [];
+      localCal.forEach((lc) => calMap.set(lc.id, lc));
       cloudCalendar.forEach((cc) => calMap.set(cc.id, cc));
-      for (const lc of calendarEntries) {
-        if (!calMap.has(lc.id)) {
-          calMap.set(lc.id, lc);
-        }
-      }
       const mergedCal = Array.from(calMap.values());
       setCalendarEntries(mergedCal);
-      localStorage.setItem(STORAGE_KEYS.CALENDAR, JSON.stringify(mergedCal));
-      await FirebaseWardrobeService.saveCalendar(user.uid, mergedCal);
+      safeSaveToLocalStorage(STORAGE_KEYS.CALENDAR, mergedCal);
+      try {
+        await FirebaseWardrobeService.saveCalendar(user.uid, mergedCal);
+      } catch (e) {
+        console.warn('Error saving calendar to cloud:', e);
+      }
 
       setLastSyncTime(new Date());
     } catch (err) {
       console.error('Firebase sync error:', err);
-      throw err;
     } finally {
+      isSyncingRef.current = false;
       setIsSyncingCloud(false);
     }
-  }, [user, wardrobe, savedOutfits, calendarEntries]);
+  }, [user]);
 
-  // Auto-sync whenever user logs in
+  // Auto-sync ONCE whenever a user logs in
   useEffect(() => {
     if (user && isLoaded) {
-      syncNow().catch((e) => console.error('Auto sync error:', e));
+      if (lastSyncedUserRef.current !== user.uid) {
+        lastSyncedUserRef.current = user.uid;
+        syncNow().catch((e) => console.warn('Auto sync error:', e));
+      }
+    } else if (!user) {
+      lastSyncedUserRef.current = null;
     }
   }, [user, isLoaded, syncNow]);
 
@@ -288,16 +348,16 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
         const merged = Array.from(map.values());
         setWardrobe(merged);
-        localStorage.setItem(STORAGE_KEYS.WARDROBE, JSON.stringify(merged));
+        safeSaveToLocalStorage(STORAGE_KEYS.WARDROBE, merged);
         setIsDemoActive(false);
-        localStorage.setItem(STORAGE_KEYS.IS_DEMO, 'false');
+        safeSaveToLocalStorage(STORAGE_KEYS.IS_DEMO, 'false');
 
         if (user) {
           for (const item of sanitized) {
             try {
               await FirebaseWardrobeService.saveItem(user.uid, item);
             } catch (e) {
-              console.error(e);
+              console.warn('Error saving imported item to cloud:', e);
             }
           }
         }
@@ -313,123 +373,131 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   // Save changes to LocalStorage
   const syncWardrobe = useCallback((newItems: ClothingItem[]) => {
     setWardrobe(newItems);
-    localStorage.setItem(STORAGE_KEYS.WARDROBE, JSON.stringify(newItems));
+    safeSaveToLocalStorage(STORAGE_KEYS.WARDROBE, newItems);
   }, []);
 
   const syncSavedOutfits = useCallback((newOutfits: Outfit[]) => {
     setSavedOutfits(newOutfits);
-    localStorage.setItem(STORAGE_KEYS.SAVED_OUTFITS, JSON.stringify(newOutfits));
+    safeSaveToLocalStorage(STORAGE_KEYS.SAVED_OUTFITS, newOutfits);
   }, []);
 
   const syncCalendar = useCallback((newEntries: CalendarEntry[]) => {
     setCalendarEntries(newEntries);
-    localStorage.setItem(STORAGE_KEYS.CALENDAR, JSON.stringify(newEntries));
+    safeSaveToLocalStorage(STORAGE_KEYS.CALENDAR, newEntries);
   }, []);
 
   const syncDisliked = useCallback((newIds: string[]) => {
     setDislikedOutfitIds(newIds);
-    localStorage.setItem(STORAGE_KEYS.DISLIKED, JSON.stringify(newIds));
+    safeSaveToLocalStorage(STORAGE_KEYS.DISLIKED, newIds);
   }, []);
 
   // Item Actions
   const addItem = useCallback(
     async (item: ClothingItem) => {
-      let finalItem = { ...item };
-      const updated = [finalItem, ...wardrobe];
+      const finalItem = { ...item };
       setIsDemoActive(false);
-      localStorage.setItem(STORAGE_KEYS.IS_DEMO, 'false');
-      syncWardrobe(updated);
+      safeSaveToLocalStorage(STORAGE_KEYS.IS_DEMO, 'false');
 
-      // If user is authenticated with Firebase, upload image to Cloud Storage & save to Firestore
+      // 1. Immediately save to local state and local storage with quota protection
+      setWardrobe((prev) => {
+        const updated = [finalItem, ...prev.filter((i) => i.id !== finalItem.id)];
+        safeSaveToLocalStorage(STORAGE_KEYS.WARDROBE, updated);
+        return updated;
+      });
+
+      // 2. If user is authenticated with Firebase, save directly to Firestore
       if (user) {
         try {
-          if (finalItem.imageUrl.startsWith('data:image')) {
-            const storageUrl = await FirebaseWardrobeService.uploadGarmentImage(
-              user.uid,
-              finalItem.id,
-              finalItem.imageUrl
-            );
-            finalItem.imageUrl = storageUrl;
-            // update in state
-            const updatedWithUrl = updated.map((i) => (i.id === finalItem.id ? finalItem : i));
-            syncWardrobe(updatedWithUrl);
-          }
           await FirebaseWardrobeService.saveItem(user.uid, finalItem);
-        } catch (err) {
-          console.error('Failed to sync added item with Firebase:', err);
+        } catch (err: any) {
+          console.warn('Firebase save item warning (local item safely preserved):', err?.code || err?.message || err);
         }
       }
     },
-    [wardrobe, syncWardrobe, user]
+    [user]
   );
 
   const updateItem = useCallback(
     async (id: string, updates: Partial<ClothingItem>) => {
-      const updated = wardrobe.map((item) => (item.id === id ? { ...item, ...updates } : item));
-      syncWardrobe(updated);
+      setWardrobe((prev) => {
+        const updated = prev.map((item) => (item.id === id ? { ...item, ...updates } : item));
+        safeSaveToLocalStorage(STORAGE_KEYS.WARDROBE, updated);
+        return updated;
+      });
 
       if (user) {
         try {
           await FirebaseWardrobeService.updateItem(user.uid, id, updates);
-        } catch (err) {
-          console.error('Failed to sync updated item with Firebase:', err);
+        } catch (err: any) {
+          console.warn('Firebase update item warning:', err?.code || err?.message || err);
         }
       }
     },
-    [wardrobe, syncWardrobe, user]
+    [user]
   );
 
   const deleteItem = useCallback(
     async (id: string) => {
-      const updated = wardrobe.filter((item) => item.id !== id);
-      syncWardrobe(updated);
+      setWardrobe((prev) => {
+        const updated = prev.filter((item) => item.id !== id);
+        safeSaveToLocalStorage(STORAGE_KEYS.WARDROBE, updated);
+        return updated;
+      });
 
       if (user) {
         try {
           await FirebaseWardrobeService.deleteItem(user.uid, id);
-        } catch (err) {
-          console.error('Failed to sync deleted item with Firebase:', err);
+        } catch (err: any) {
+          console.warn('Firebase delete item warning:', err?.code || err?.message || err);
         }
       }
     },
-    [wardrobe, syncWardrobe, user]
+    [user]
   );
 
   const toggleItemFavorite = useCallback(
     (id: string) => {
-      const updated = wardrobe.map((item) =>
-        item.id === id ? { ...item, isFavorite: !item.isFavorite } : item
-      );
-      syncWardrobe(updated);
-      const target = updated.find((i) => i.id === id);
-      if (user && target) {
-        FirebaseWardrobeService.updateItem(user.uid, id, { isFavorite: target.isFavorite });
-      }
+      setWardrobe((prev) => {
+        const updated = prev.map((item) =>
+          item.id === id ? { ...item, isFavorite: !item.isFavorite } : item
+        );
+        safeSaveToLocalStorage(STORAGE_KEYS.WARDROBE, updated);
+        const target = updated.find((i) => i.id === id);
+        if (user && target) {
+          FirebaseWardrobeService.updateItem(user.uid, id, { isFavorite: target.isFavorite }).catch((e) =>
+            console.warn('Favorite sync warning:', e)
+          );
+        }
+        return updated;
+      });
     },
-    [wardrobe, syncWardrobe, user]
+    [user]
   );
 
   const incrementWearCount = useCallback(
     (itemId: string) => {
-      const updated = wardrobe.map((item) =>
-        item.id === itemId
-          ? {
-              ...item,
-              wearCount: (item.wearCount || 0) + 1,
-              lastWorn: new Date().toISOString(),
-            }
-          : item
-      );
-      syncWardrobe(updated);
-      const target = updated.find((i) => i.id === itemId);
-      if (user && target) {
-        FirebaseWardrobeService.updateItem(user.uid, itemId, {
-          wearCount: target.wearCount,
-          lastWorn: target.lastWorn,
-        });
-      }
+      setWardrobe((prev) => {
+        const updated = prev.map((item) =>
+          item.id === itemId
+            ? {
+                ...item,
+                wearCount: (item.wearCount || 0) + 1,
+                lastWorn: new Date().toISOString(),
+              }
+            : item
+        );
+        safeSaveToLocalStorage(STORAGE_KEYS.WARDROBE, updated);
+        const target = updated.find((i) => i.id === itemId);
+        if (user && target) {
+          FirebaseWardrobeService.updateItem(user.uid, itemId, {
+            wearCount: target.wearCount,
+            lastWorn: target.lastWorn,
+          }).catch((e) => console.warn('Wear count sync warning:', e));
+        }
+        return updated;
+      });
     },
-    [wardrobe, syncWardrobe, user]
+    [user]
   );
 
   // Outfit Actions
@@ -507,8 +575,8 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const loadDemoWardrobe = useCallback(() => {
     setWardrobe(INITIAL_MOCK_WARDROBE);
     setIsDemoActive(true);
-    localStorage.setItem(STORAGE_KEYS.WARDROBE, JSON.stringify(INITIAL_MOCK_WARDROBE));
-    localStorage.setItem(STORAGE_KEYS.IS_DEMO, 'true');
+    safeSaveToLocalStorage(STORAGE_KEYS.WARDROBE, INITIAL_MOCK_WARDROBE);
+    safeSaveToLocalStorage(STORAGE_KEYS.IS_DEMO, 'true');
   }, []);
 
   const clearWardrobe = useCallback(() => {
@@ -516,10 +584,10 @@ export const WardrobeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setSavedOutfits([]);
     setCalendarEntries([]);
     setIsDemoActive(false);
-    localStorage.setItem(STORAGE_KEYS.WARDROBE, JSON.stringify([]));
-    localStorage.setItem(STORAGE_KEYS.SAVED_OUTFITS, JSON.stringify([]));
-    localStorage.setItem(STORAGE_KEYS.CALENDAR, JSON.stringify([]));
-    localStorage.setItem(STORAGE_KEYS.IS_DEMO, 'false');
+    safeSaveToLocalStorage(STORAGE_KEYS.WARDROBE, []);
+    safeSaveToLocalStorage(STORAGE_KEYS.SAVED_OUTFITS, []);
+    safeSaveToLocalStorage(STORAGE_KEYS.CALENDAR, []);
+    safeSaveToLocalStorage(STORAGE_KEYS.IS_DEMO, 'false');
   }, []);
 
   return (

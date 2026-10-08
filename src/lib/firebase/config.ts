@@ -1,6 +1,6 @@
 import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
 import { getAuth, Auth } from 'firebase/auth';
-import { getFirestore, Firestore } from 'firebase/firestore';
+import { getFirestore, initializeFirestore, Firestore } from 'firebase/firestore';
 
 export const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "AIzaSyAo37m-6Lw81J5jrFTSDpleJTA7jrSawxc",
@@ -24,7 +24,13 @@ try {
   if (isFirebaseConfigured()) {
     app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
     auth = getAuth(app);
-    db = getFirestore(app);
+    try {
+      db = initializeFirestore(app, {
+        ignoreUndefinedProperties: true,
+      });
+    } catch {
+      db = getFirestore(app);
+    }
 
     // Initialize Analytics in browser if supported
     if (typeof window !== 'undefined') {

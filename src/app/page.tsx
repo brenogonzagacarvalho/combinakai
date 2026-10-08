@@ -52,8 +52,8 @@ export default function App() {
     }
   };
 
-  const handleItemAdded = (newItem: ClothingItem) => {
-    addItem(newItem);
+  const handleItemAdded = async (newItem: ClothingItem) => {
+    await addItem(newItem);
     setSelectedItem(newItem);
   };
 

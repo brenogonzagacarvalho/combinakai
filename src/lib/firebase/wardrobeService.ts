@@ -9,6 +9,28 @@ import {
 import { db } from './config';
 import { ClothingItem, Outfit, CalendarEntry } from '@/types/wardrobe';
 
+/**
+ * Strips all undefined properties from objects to prevent Firestore rejection
+ */
+export function sanitizeForFirestore<T>(data: T): T {
+  if (data === null || data === undefined) {
+    return data;
+  }
+  if (Array.isArray(data)) {
+    return data.map((item) => sanitizeForFirestore(item)) as unknown as T;
+  }
+  if (typeof data === 'object') {
+    const cleaned: Record<string, any> = {};
+    for (const [key, value] of Object.entries(data as Record<string, any>)) {
+      if (value !== undefined) {
+        cleaned[key] = sanitizeForFirestore(value);
+      }
+    }
+    return cleaned as T;
+  }
+  return data;
+}
+
 export class FirebaseWardrobeService {
   /**
    * Stores garment images directly in Firestore (100% Free, no Storage / Credit Card required)
@@ -28,10 +50,15 @@ export class FirebaseWardrobeService {
   static async saveItem(userId: string, item: ClothingItem): Promise<void> {
     if (!db) return;
     try {
+      const sanitized = sanitizeForFirestore({ ...item });
+      // If originalImageUrl is identical to imageUrl or empty, don't waste Firestore document space
+      if (sanitized.originalImageUrl === sanitized.imageUrl || !sanitized.originalImageUrl) {
+        delete sanitized.originalImageUrl;
+      }
       const itemRef = doc(db, 'users', userId, 'wardrobe', item.id);
-      await setDoc(itemRef, item);
-    } catch (err) {
-      console.error('Error saving item to Firestore:', err);
+      await setDoc(itemRef, sanitized);
+    } catch (err: any) {
+      console.error('Error saving item to Firestore:', err?.code || err?.message || err);
       throw err;
     }
   }
@@ -46,10 +73,11 @@ export class FirebaseWardrobeService {
   ): Promise<void> {
     if (!db) return;
     try {
+      const sanitized = sanitizeForFirestore({ ...updates });
       const itemRef = doc(db, 'users', userId, 'wardrobe', itemId);
-      await updateDoc(itemRef, updates);
-    } catch (err) {
-      console.error('Error updating item in Firestore:', err);
+      await updateDoc(itemRef, sanitized);
+    } catch (err: any) {
+      console.error('Error updating item in Firestore:', err?.code || err?.message || err);
       throw err;
     }
   }
@@ -91,8 +119,9 @@ export class FirebaseWardrobeService {
   static async saveOutfit(userId: string, outfit: Outfit): Promise<void> {
     if (!db) return;
     try {
+      const sanitized = sanitizeForFirestore({ ...outfit });
       const outfitRef = doc(db, 'users', userId, 'outfits', outfit.id);
-      await setDoc(outfitRef, outfit);
+      await setDoc(outfitRef, sanitized);
     } catch (err) {
       console.error('Error saving outfit to Firestore:', err);
     }
@@ -134,8 +163,9 @@ export class FirebaseWardrobeService {
   static async saveCalendar(userId: string, entries: CalendarEntry[]): Promise<void> {
     if (!db) return;
     try {
+      const sanitized = sanitizeForFirestore(entries);
       const calRef = doc(db, 'users', userId, 'settings', 'calendar');
-      await setDoc(calRef, { entries });
+      await setDoc(calRef, { entries: sanitized });
     } catch (err) {
       console.error('Error saving calendar to Firestore:', err);
     }

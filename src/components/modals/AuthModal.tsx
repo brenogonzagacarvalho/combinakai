@@ -14,6 +14,7 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { useWardrobe } from '@/context/WardrobeContext';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -22,6 +23,7 @@ interface AuthModalProps {
 
 export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
   const { user, isFirebaseReady, signInWithGoogle, signInEmail, signUpEmail, logout } = useAuth();
+  const { syncNow, isSyncingCloud, lastSyncTime, wardrobe } = useWardrobe();
 
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [email, setEmail] = useState('');
@@ -108,17 +110,40 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
 
               <div className="bg-[#FAF8F5] p-3.5 rounded-2xl border border-[#EAE5DC] text-xs text-[#2F855A] flex items-center justify-center gap-2">
                 <CheckCircle2 size={16} />
-                <span className="font-medium">Suas roupas e looks estão salvos no Firebase Cloud.</span>
+                <span className="font-medium">
+                  {wardrobe.length} peças prontas e salvas localmente & nuvem.
+                </span>
               </div>
+
+              <button
+                onClick={async () => {
+                  try {
+                    await syncNow();
+                  } catch (e) {
+                    console.error(e);
+                  }
+                }}
+                disabled={isSyncingCloud}
+                className="w-full py-3 px-4 bg-[#18181B] text-[#FBF9F5] rounded-2xl text-xs font-semibold flex items-center justify-center gap-2 active:scale-95 transition-all disabled:opacity-60 hover:bg-[#28282C]"
+              >
+                <Cloud size={15} className={isSyncingCloud ? 'animate-bounce text-[#E5C799]' : 'text-[#E5C799]'} />
+                <span>{isSyncingCloud ? 'Sincronizando com a nuvem...' : 'Sincronizar Agora com a Nuvem'}</span>
+              </button>
+
+              {lastSyncTime && (
+                <p className="text-[11px] text-[#A8A49C]">
+                  Última sincronização: {lastSyncTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </p>
+              )}
 
               <button
                 onClick={async () => {
                   await logout();
                   onClose();
                 }}
-                className="w-full py-3 px-4 bg-white border border-[#E0DACE] hover:bg-[#F9F7F3] text-[#9B2C2C] rounded-2xl text-xs font-bold flex items-center justify-center gap-2 active:scale-95 transition-all"
+                className="w-full py-2.5 px-4 bg-white border border-[#E0DACE] hover:bg-[#F9F7F3] text-[#9B2C2C] rounded-2xl text-xs font-medium flex items-center justify-center gap-2 active:scale-95 transition-all mt-2"
               >
-                <LogOut size={15} />
+                <LogOut size={14} />
                 <span>Desconectar desta conta</span>
               </button>
             </div>
